@@ -1,0 +1,52 @@
+# ==============================================================================
+# SQL Ginny - Git Ignore Configuration
+# ==============================================================================
+
+# Environment & Secrets (NEVER COMMIT)
+.env
+*.env
+.env.local
+.env.*.local
+
+# Docker Infrastructure Configuration (Excluded as requested)
+docker-compose.yml
+docker-compose.*.yml
+start_docker.sh
+update_openrouter_key.sh
+librechat.yaml
+
+# Python Environments & Artifacts
+__pycache__/
+*/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+backend/venv
+backend/venv/
+venv
+venv/
+.venv
+.venv/
+env
+env/
+ENV/
+*.log
+backend/backend.log
+
+# Node & Frontend Build Artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+.npm
+.eslintcache
+
+# IDE, OS & System Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
