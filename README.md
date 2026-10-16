@@ -232,6 +232,3 @@ SQL Ginny exposes 11 native MCP tools over HTTP/SSE:
 - **Data Confidentiality Enforcement**: Automated column exclusion filters out sensitive attributes (e.g. `customer_id`, customer codes) from final outputs when organizational privacy rules match.
 
 ---
-
-## 📄 License
-MIT License. Free for enterprise and personal development.
