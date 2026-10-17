@@ -432,7 +432,21 @@ def plan_dynamic_query(
     )
 
     query_type = final_plan.get("query_type", "postgres")
-    sql_query = final_plan.get("sql_query", "")
+    sql_query = (
+        final_plan.get("sql_query")
+        or final_plan.get("query")
+        or final_plan.get("sql")
+        or final_plan.get("postgres_query")
+        or ""
+    ).strip()
+
+    # Safeguard: If the LLM failed to emit a valid SELECT query, generate a clean SELECT statement
+    if not sql_query.upper().startswith(("SELECT", "WITH", "EXPLAIN")):
+        target_tbl = start_node if start_node in valid_pg else (valid_pg[0] if valid_pg else "warehouses")
+        cols = list(grounded_schemas.get("pg_tables", {}).get(target_tbl, {}).keys())
+        cols_str = ", ".join(cols) if cols else "*"
+        sql_query = f"SELECT {cols_str} FROM {target_tbl}"
+
     mongo_collection = final_plan.get("mongo_collection")
     pg_join_key = final_plan.get("pg_join_key")
     mongo_join_key = final_plan.get("mongo_join_key")

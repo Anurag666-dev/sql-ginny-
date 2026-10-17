@@ -21,6 +21,10 @@ def tool_run_postgres_raw_query(query: str) -> Dict[str, Any]:
     Stores results in Redis with a 10-minute TTL and returns top 5 rows for user confirmation.
     """
     cleaned_query = query.strip()
+    if not cleaned_query:
+        return {
+            "error": "Query Error: SQL query string was empty."
+        }
     if not cleaned_query.upper().startswith(("SELECT", "WITH", "EXPLAIN")):
         return {
             "error": "Security Restriction: Only SELECT queries are permitted on tables/views/materialized views."
