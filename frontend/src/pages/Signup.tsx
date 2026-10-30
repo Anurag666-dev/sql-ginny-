@@ -32,65 +32,65 @@ export const Signup: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-12">
-      <div className="w-full max-w-md space-y-8 rounded-3xl border border-slate-800 bg-slate-900/90 p-8 shadow-2xl backdrop-blur-xl">
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12 text-slate-900">
+      <div className="w-full max-w-md space-y-8 rounded-3xl border border-slate-200 bg-white p-8 shadow-xl">
         <div className="text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-sky-600 via-indigo-600 to-cyan-400 shadow-xl shadow-sky-500/25">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 shadow-md">
             <Database className="h-7 w-7 text-white" />
           </div>
-          <h1 className="mt-4 text-2xl font-bold tracking-tight text-white">Create Account</h1>
-          <p className="mt-1 text-xs text-slate-400">Join SQL Ginny Database Intelligence</p>
+          <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-900">Create Account</h1>
+          <p className="mt-1 text-xs text-slate-500">Join SQL Ginny Database Intelligence</p>
         </div>
 
         {error && (
-          <div className="flex items-center gap-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-300">
-            <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+          <div className="flex items-center gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-xs text-rose-700">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
             <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-300">Full Name</label>
+            <label className="block text-xs font-semibold text-slate-700">Full Name</label>
             <div className="relative mt-1.5">
-              <User className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+              <User className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Anurag Sharma"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950/70 py-2.5 pl-10 pr-3.5 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className="w-full rounded-xl border border-slate-300 bg-slate-50 py-2.5 pl-10 pr-3.5 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300">Email Address</label>
+            <label className="block text-xs font-semibold text-slate-700">Email Address</label>
             <div className="relative mt-1.5">
-              <Mail className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+              <Mail className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@company.com"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950/70 py-2.5 pl-10 pr-3.5 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className="w-full rounded-xl border border-slate-300 bg-slate-50 py-2.5 pl-10 pr-3.5 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300">Password</label>
+            <label className="block text-xs font-semibold text-slate-700">Password</label>
             <div className="relative mt-1.5">
-              <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+              <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
               <input
                 type="password"
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950/70 py-2.5 pl-10 pr-3.5 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className="w-full rounded-xl border border-slate-300 bg-slate-50 py-2.5 pl-10 pr-3.5 text-sm text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
               />
             </div>
           </div>
@@ -98,16 +98,16 @@ export const Signup: React.FC = () => {
           <button
             type="submit"
             disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-500/25 transition hover:from-sky-400 hover:to-indigo-500 disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
           >
-            {loading ? 'Creating account...' : 'Create Account'}
-            <ArrowRight className="h-4 w-4" />
+            <span>{loading ? 'Creating account...' : 'Create Account'}</span>
+            <ArrowRight className="h-4 w-4 text-white" />
           </button>
         </form>
 
         <p className="text-center text-xs text-slate-500">
           Already registered?{' '}
-          <Link to="/login" className="font-semibold text-sky-400 hover:underline">
+          <Link to="/login" className="font-bold text-slate-900 hover:underline">
             Sign in
           </Link>
         </p>

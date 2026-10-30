@@ -1,138 +1,145 @@
 from typing import List, Dict, Any, Optional
-from collections import deque
-from app.db.memgraph_client import run_cypher
+from app.db.memgraph_client import run_cypher, get_memgraph_driver
+
 
 def get_live_topology() -> Dict[str, Any]:
     """Retrieves full live topology directly from Memgraph. Raises an error if Memgraph is offline."""
-    nodes_res = run_cypher("MATCH (n:Entity) RETURN n.name as name, n.system as system, n.type as type, n.primary_key as primary_key, n.description as description, n.fields as fields")
-    edges_res = run_cypher("MATCH (a:Entity)-[r]->(b:Entity) RETURN a.name as source, b.name as target, type(r) as type, r.from_field as from_field, r.to_field as to_field, r.condition as condition, r.description as desc")
-    
+    nodes_res = run_cypher(
+        "MATCH (n:Entity) RETURN n.name as name, n.system as system, n.type as type, "
+        "n.primary_key as primary_key, n.description as description, n.fields as fields"
+    )
+    edges_res = run_cypher(
+        "MATCH (a:Entity)-[r]->(b:Entity) RETURN a.name as source, b.name as target, "
+        "type(r) as type, r.from_field as from_field, r.to_field as to_field, "
+        "r.condition as condition, r.description as desc"
+    )
+
     if not nodes_res:
-        raise RuntimeError("Memgraph returned no topology nodes. Please ensure the Memgraph container is running on port 7687 and has been seeded via 'scripts/seed_all.py' or 'scripts/init_memgraph.cypher'.")
-        
+        raise RuntimeError(
+            "Memgraph returned no topology nodes. Please ensure the Memgraph container is running on port 7687 "
+            "and has been seeded via 'scripts/seed_all.py' or 'scripts/init_memgraph.cypher'."
+        )
+
     return {"nodes": nodes_res, "edges": edges_res or []}
 
-def build_adjacency(topology: Dict[str, Any], undirected: bool = True) -> Dict[str, List[Dict[str, Any]]]:
-    adj = {}
-    for node in topology["nodes"]:
-        adj[node["name"]] = []
-        
-    for edge in topology["edges"]:
-        src = edge["source"]
-        tgt = edge["target"]
-        if src not in adj:
-            adj[src] = []
-        if tgt not in adj:
-            adj[tgt] = []
-            
-        adj[src].append({
-            "neighbor": tgt,
-            "direction": "outbound",
-            "type": edge["type"],
-            "from_field": edge.get("from_field"),
-            "to_field": edge.get("to_field"),
-            "condition": edge.get("condition"),
-            "desc": edge.get("desc")
-        })
-        
-        if undirected:
-            adj[tgt].append({
-                "neighbor": src,
-                "direction": "inbound",
-                "type": edge["type"],
-                "from_field": edge.get("to_field"),
-                "to_field": edge.get("from_field"),
-                "condition": edge.get("condition"),
-                "desc": edge.get("desc")
-            })
-    return adj
 
-def bfs_paths(start_entity: str, target_entity: str, max_depth: int = 5) -> List[Dict[str, Any]]:
+def _parse_cypher_path(p: Any, algorithm_label: str) -> Optional[Dict[str, Any]]:
     """
-    Breadth-First Search (BFS) to find the shortest join paths between two database entities.
+    Converts a native Memgraph Cypher Path object `(a)-[r]-(b)` into our structured path dictionary.
+    Because `(a)-[r]-(b)` is matched undirectionally in Cypher, each relationship `r` retains its
+    endpoint nodes `r.nodes[0]` and `r.nodes[1]`, making the join condition symmetric without manual flipping.
     """
-    topology = get_live_topology()
-    adj = build_adjacency(topology, undirected=True)
-    
-    if start_entity not in adj or target_entity not in adj:
-        return []
-        
-    queue = deque([ (start_entity, [], []) ]) # (current_node, visited_nodes, edges_path)
-    found_paths = []
-    
-    while queue:
-        curr, path_nodes, path_edges = queue.popleft()
-        current_path_nodes = path_nodes + [curr]
-        
-        if curr == target_entity and len(path_edges) > 0:
-            found_paths.append({
-                "algorithm": "BFS",
-                "hops": len(path_edges),
-                "is_direct": len(path_edges) == 1,
-                "intermediate_entities": current_path_nodes[1:-1],
-                "path_sequence": current_path_nodes,
-                "edges": path_edges,
-                "join_summary": generate_join_instructions(current_path_nodes, path_edges)
-            })
-            if len(found_paths) >= 3:
-                break
-            continue
-            
-        if len(path_edges) >= max_depth:
-            continue
-            
-        for edge_info in adj.get(curr, []):
-            nxt = edge_info["neighbor"]
-            if nxt not in current_path_nodes: # avoid cycles
-                queue.append((nxt, current_path_nodes, path_edges + [edge_info]))
-                
-    return found_paths
+    path_nodes = [n["name"] for n in p.nodes]
+    # Enforce simple paths (no repeated nodes/cycles)
+    if len(path_nodes) != len(set(path_nodes)) or len(path_nodes) < 2:
+        return None
 
-def dfs_paths(start_entity: str, target_entity: str, max_depth: int = 5) -> List[Dict[str, Any]]:
-    """
-    Depth-First Search (DFS) to explore all multi-hop relational pathways between two database entities.
-    """
-    topology = get_live_topology()
-    adj = build_adjacency(topology, undirected=True)
-    
-    if start_entity not in adj or target_entity not in adj:
-        return []
-        
-    found_paths = []
-    
-    def dfs(curr: str, current_path_nodes: List[str], current_edges: List[Dict[str, Any]]):
-        if len(current_edges) > max_depth or len(found_paths) >= 5:
-            return
-            
-        if curr == target_entity and len(current_edges) > 0:
-            found_paths.append({
-                "algorithm": "DFS",
-                "hops": len(current_edges),
-                "is_direct": len(current_edges) == 1,
-                "intermediate_entities": current_path_nodes[1:-1],
-                "path_sequence": current_path_nodes,
-                "edges": current_edges,
-                "join_summary": generate_join_instructions(current_path_nodes, current_edges)
-            })
-            return
-            
-        for edge_info in adj.get(curr, []):
-            nxt = edge_info["neighbor"]
-            if nxt not in current_path_nodes:
-                dfs(nxt, current_path_nodes + [nxt], current_edges + [edge_info])
-                
-    dfs(start_entity, [start_entity], [])
-    return found_paths
+    path_edges: List[Dict[str, Any]] = []
+    join_steps: List[str] = []
 
-def generate_join_instructions(nodes: List[str], edges: List[Dict[str, Any]]) -> str:
-    """Produces human and AI-readable join execution instructions."""
-    steps = []
-    for i, edge in enumerate(edges):
-        src = nodes[i]
-        tgt = nodes[i+1]
-        edge_type = edge["type"]
-        ff = edge["from_field"]
-        tf = edge["to_field"]
-        cond = f" [Condition: {edge['condition']}]" if edge.get("condition") else ""
-        steps.append(f"{i+1}. Link {src} -> {tgt} via ({src}.{ff} = {tgt}.{tf}) [Type: {edge_type}]{cond}")
-    return " | ".join(steps)
+    for i, r in enumerate(p.relationships):
+        stored_src = r.nodes[0]["name"]
+        stored_tgt = r.nodes[1]["name"]
+        ff = r.get("from_field")
+        tf = r.get("to_field")
+        cond = r.get("condition")
+        edge_type = r.type
+
+        # Align from_field / to_field with traversal walk order (path_nodes[i] -> path_nodes[i+1])
+        walk_src = path_nodes[i]
+        walk_tgt = path_nodes[i + 1]
+        if walk_src == stored_src:
+            walk_ff, walk_tf = ff, tf
+        else:
+            walk_ff, walk_tf = tf, ff
+
+        edge_info = {
+            "neighbor": walk_tgt,
+            "type": edge_type,
+            "from_field": walk_ff,
+            "to_field": walk_tf,
+            "condition": cond,
+            "desc": r.get("description")
+        }
+        path_edges.append(edge_info)
+
+        cond_str = f" [Condition: {cond}]" if cond else ""
+        join_steps.append(
+            f"{i + 1}. Link {walk_src} <-> {walk_tgt} via ({stored_src}.{ff} = {stored_tgt}.{tf}) [Type: {edge_type}]{cond_str}"
+        )
+
+    return {
+        "algorithm": algorithm_label,
+        "hops": len(path_edges),
+        "is_direct": len(path_edges) == 1,
+        "intermediate_entities": path_nodes[1:-1],
+        "path_sequence": path_nodes,
+        "edges": path_edges,
+        "join_summary": " | ".join(join_steps)
+    }
+
+
+def bfs_paths(
+    start_entity: str,
+    target_entity: str,
+    max_depth: Optional[int] = None,
+    return_map: bool = False
+) -> Any:
+    """
+    Uses Memgraph's native undirected Cypher `*BFS` engine:
+      MATCH p = (a:Entity {name: $start})-[*BFS]-(b:Entity {name: $end})
+    to find the shortest join path between two entities.
+    """
+    if not start_entity or not target_entity or start_entity == target_entity:
+        return {} if return_map else []
+
+    hop_bound = f"..{max_depth}" if max_depth else ""
+    cypher = f"""
+        MATCH p = (a:Entity {{name: $start}})-[*BFS{hop_bound}]-(b:Entity {{name: $end}})
+        RETURN p
+        LIMIT 5
+    """
+    found_map: Dict[tuple, Dict[str, Any]] = {}
+    driver = get_memgraph_driver()
+    with driver.session() as session:
+        res = session.run(cypher, {"start": start_entity, "end": target_entity})
+        for record in res:
+            parsed = _parse_cypher_path(record["p"], "BFS")
+            if parsed:
+                seq_key = tuple(parsed["path_sequence"])
+                found_map[seq_key] = parsed
+
+    return found_map if return_map else list(found_map.values())
+
+
+def dfs_paths(
+    start_entity: str,
+    target_entity: str,
+    max_depth: Optional[int] = None,
+    return_map: bool = False
+) -> Any:
+    """
+    Uses Memgraph's native undirected variable-length Cypher traversal:
+      MATCH p = (a:Entity {name: $start})-[*1..6]-(b:Entity {name: $end})
+    to discover ALL candidate semantic join pathways (since shortest path != right semantic path).
+    """
+    if not start_entity or not target_entity or start_entity == target_entity:
+        return {} if return_map else []
+
+    upper_bound = max_depth if max_depth else 6
+    cypher = f"""
+        MATCH p = (a:Entity {{name: $start}})-[*1..{upper_bound}]-(b:Entity {{name: $end}})
+        RETURN p
+        LIMIT 20
+    """
+    found_map: Dict[tuple, Dict[str, Any]] = {}
+    driver = get_memgraph_driver()
+    with driver.session() as session:
+        res = session.run(cypher, {"start": start_entity, "end": target_entity})
+        for record in res:
+            parsed = _parse_cypher_path(record["p"], "DFS")
+            if parsed:
+                seq_key = tuple(parsed["path_sequence"])
+                found_map[seq_key] = parsed
+
+    return found_map if return_map else list(found_map.values())

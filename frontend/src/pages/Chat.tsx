@@ -61,6 +61,11 @@ interface Conversation {
   messages: Message[];
 }
 
+// Module-level session cache so switching routes (e.g. Chat -> Visualizer -> Chat) never loses active chat state
+let memoryConversations: Conversation[] | null = null;
+let memoryActiveConvoId: string | null = null;
+let memoryLoadedUserId: number | null = null;
+
 export const Chat: React.FC = () => {
   const { user } = useAuth();
 
@@ -80,14 +85,10 @@ export const Chat: React.FC = () => {
   const [tempApiKeyInput, setTempApiKeyInput] = useState('');
   const modelDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Conversations State
+  // Conversations State (strictly persisted in MongoDB 'chats' collection per authenticated user)
   const [conversations, setConversations] = useState<Conversation[]>(() => {
-    const saved = localStorage.getItem('ginny_conversations');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch { /* ignore */ }
+    if (memoryConversations && memoryConversations.length > 0 && (!user?.id || memoryLoadedUserId === user.id)) {
+      return memoryConversations;
     }
     return [{
       id: 'default',
@@ -98,14 +99,8 @@ export const Chat: React.FC = () => {
   });
 
   const [activeConvoId, setActiveConvoId] = useState<string>(() => {
-    const saved = localStorage.getItem('ginny_conversations');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id) {
-          return parsed[0].id;
-        }
-      } catch { /* ignore */ }
+    if (memoryActiveConvoId && (!user?.id || memoryLoadedUserId === user.id)) {
+      return memoryActiveConvoId;
     }
     return 'default';
   });
@@ -116,6 +111,49 @@ export const Chat: React.FC = () => {
   const isSubmittingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latestConvosRef = useRef<Conversation[]>(conversations);
+  const latestActiveIdRef = useRef<string>(activeConvoId);
+
+  useEffect(() => {
+    latestConvosRef.current = conversations;
+    latestActiveIdRef.current = activeConvoId;
+    memoryConversations = conversations;
+    memoryActiveConvoId = activeConvoId;
+  }, [conversations, activeConvoId]);
+
+  const syncChatsToMongo = (convosToSave: Conversation[], activeIdToSave: string) => {
+    const token = localStorage.getItem('ginny_token');
+    if (!user?.id || !token) return;
+    axios.put(
+      `${API_URL}/api/chat/conversations`,
+      {
+        conversations: convosToSave,
+        active_convo_id: activeIdToSave
+      },
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    ).catch(err => {
+      console.warn('Failed to sync chats to MongoDB:', err);
+    });
+  };
+
+  // Ensure clean unmount when navigating to Database Visualizer or other pages
+  useEffect(() => {
+    isSubmittingRef.current = false;
+    return () => {
+      isSubmittingRef.current = false;
+      if (abortControllerRef.current) {
+        try {
+          abortControllerRef.current.abort();
+        } catch { /* ignore */ }
+        abortControllerRef.current = null;
+      }
+      if (mongoLoadedRef.current) {
+        syncChatsToMongo(latestConvosRef.current, latestActiveIdRef.current);
+      }
+    };
+  }, []);
 
   // Result Preview Modal State
   const [previewResultId, setPreviewResultId] = useState<string | null>(null);
@@ -169,10 +207,82 @@ export const Chat: React.FC = () => {
     }
   }, [conversations, activeConvoId]);
 
-  // Sync conversations to localStorage
+  // Track whether initial MongoDB load for current user has completed
+  const mongoLoadedRef = useRef<boolean>(
+    Boolean(memoryConversations && memoryConversations.length > 0 && user?.id && memoryLoadedUserId === user.id)
+  );
+
+  // Load user-isolated conversations strictly from MongoDB 'chats' collection upon authentication
   useEffect(() => {
-    localStorage.setItem('ginny_conversations', JSON.stringify(conversations));
-  }, [conversations]);
+    // Clean up any legacy localStorage chat data
+    localStorage.removeItem('ginny_conversations');
+    if (user?.id) {
+      localStorage.removeItem(`ginny_conversations_${user.id}`);
+    }
+
+    // If we already have the current user's conversations in memory (e.g. returning from Visualizer tab), keep them!
+    if (user?.id && memoryLoadedUserId === user.id && memoryConversations && memoryConversations.length > 0) {
+      mongoLoadedRef.current = true;
+      return;
+    }
+
+    mongoLoadedRef.current = false;
+
+    const loadUserConversations = async () => {
+      const token = localStorage.getItem('ginny_token');
+      if (user?.id && token) {
+        try {
+          const res = await axios.get(`${API_URL}/api/chat/conversations`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          // Never clobber state if user already started sending a message while fetch was in flight
+          if (isSubmittingRef.current) {
+            mongoLoadedRef.current = true;
+            memoryLoadedUserId = user.id;
+            return;
+          }
+          const mongoConvos = res.data?.conversations;
+          if (Array.isArray(mongoConvos) && mongoConvos.length > 0) {
+            setConversations(mongoConvos);
+            const nextActive = res.data?.active_convo_id || mongoConvos[0].id;
+            setActiveConvoId(nextActive);
+            memoryConversations = mongoConvos;
+            memoryActiveConvoId = nextActive;
+            memoryLoadedUserId = user.id;
+            mongoLoadedRef.current = true;
+            return;
+          }
+        } catch (err) {
+          console.warn('Could not load user chats from MongoDB:', err);
+        }
+      }
+
+      if (!isSubmittingRef.current) {
+        const defaultConvo: Conversation = {
+          id: 'default',
+          title: 'New Investigation',
+          createdAt: new Date().toISOString(),
+          messages: []
+        };
+        setConversations([defaultConvo]);
+        setActiveConvoId('default');
+        memoryConversations = [defaultConvo];
+        memoryActiveConvoId = 'default';
+      }
+      if (user?.id) {
+        memoryLoadedUserId = user.id;
+      }
+      mongoLoadedRef.current = true;
+    };
+
+    loadUserConversations();
+  }, [user?.id]);
+
+  // Sync authenticated user's multiple chats strictly to MongoDB ('chats' collection)
+  useEffect(() => {
+    if (!mongoLoadedRef.current || isStreaming) return;
+    syncChatsToMongo(conversations, activeConvoId);
+  }, [conversations, activeConvoId, user?.id, isStreaming]);
 
   // Scroll to bottom on messages change
   useEffect(() => {
@@ -272,26 +382,34 @@ export const Chat: React.FC = () => {
       newTitle = prompt.slice(0, 32) + (prompt.length > 32 ? '...' : '');
     }
 
-    setConversations(prev => prev.map(c => {
-      if (c.id === targetConvoId) {
-        return {
-          ...c,
-          title: newTitle,
-          messages: [...updatedMessages, assistantMsg]
-        };
-      }
-      return c;
-    }));
+    setConversations(prev => {
+      const next = prev.map(c => {
+        if (c.id === targetConvoId) {
+          return {
+            ...c,
+            title: newTitle,
+            messages: [...updatedMessages, assistantMsg]
+          };
+        }
+        return c;
+      });
+      memoryConversations = next;
+      latestConvosRef.current = next;
+      syncChatsToMongo(next, targetConvoId);
+      return next;
+    });
 
     setIsStreaming(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     try {
-      const historyPayload = updatedMessages.map(m => ({
-        role: m.role,
-        content: m.content
-      }));
+      const historyPayload = updatedMessages
+        .filter(m => m.content && m.content.trim().length > 0)
+        .map(m => ({
+          role: m.role,
+          content: m.content
+        }));
 
       const res = await fetch(`${API_URL}/api/chat/stream`, {
         method: 'POST',
@@ -463,6 +581,7 @@ export const Chat: React.FC = () => {
       setIsStreaming(false);
       isSubmittingRef.current = false;
       abortControllerRef.current = null;
+      syncChatsToMongo(latestConvosRef.current, latestActiveIdRef.current);
     }
   };
 
@@ -481,23 +600,23 @@ export const Chat: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
+    <div className="flex h-screen w-screen flex-col bg-slate-50 text-slate-900 overflow-hidden font-sans">
       <Navbar />
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Sidebar: Conversations & Navigation */}
-        <aside className="w-64 border-r border-slate-800 bg-slate-900/60 flex flex-col justify-between p-3 select-none">
+        <aside className="w-64 border-r border-slate-200 bg-white flex flex-col justify-between p-3 select-none shadow-sm">
           <div className="space-y-3 overflow-hidden flex flex-col h-full">
             <button
               onClick={createNewChat}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-sky-500 transition"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition"
             >
               <Plus className="h-4 w-4" />
               <span>New Investigation</span>
             </button>
 
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-2 pt-2">
-              Recent Chats
+            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-2 pt-2">
+              Saved Chats (MongoDB)
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
@@ -507,17 +626,19 @@ export const Chat: React.FC = () => {
                   onClick={() => setActiveConvoId(convo.id)}
                   className={`group flex items-center justify-between rounded-lg px-3 py-2 text-xs transition cursor-pointer ${
                     activeConvoId === convo.id
-                      ? 'bg-slate-800 text-white font-medium border border-slate-700'
-                      : 'text-slate-400 hover:bg-slate-850 hover:text-slate-200'
+                      ? 'bg-slate-900 text-white font-semibold shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                 >
                   <div className="flex items-center gap-2 truncate">
-                    <MessageSquare className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <MessageSquare className={`h-3.5 w-3.5 shrink-0 ${activeConvoId === convo.id ? 'text-white' : 'text-slate-400'}`} />
                     <span className="truncate">{convo.title}</span>
                   </div>
                   <button
                     onClick={(e) => deleteConversation(convo.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition"
+                    className={`opacity-0 group-hover:opacity-100 p-1 transition ${
+                      activeConvoId === convo.id ? 'text-slate-300 hover:text-rose-300' : 'text-slate-400 hover:text-rose-600'
+                    }`}
                     title="Delete Chat"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -528,21 +649,21 @@ export const Chat: React.FC = () => {
           </div>
 
           {/* Sidebar Footer info */}
-          <div className="border-t border-slate-800 pt-3 space-y-2 text-xs">
-            <div className="flex items-center justify-between text-slate-400 text-[11px] px-2">
-              <span className="flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+          <div className="border-t border-slate-200 pt-3 space-y-2 text-xs">
+            <div className="flex items-center justify-between text-slate-600 text-[11px] px-2">
+              <span className="flex items-center gap-1.5 font-medium">
+                <span className="h-2 w-2 rounded-full bg-emerald-600 animate-pulse" />
                 Live FastMCP Agent
               </span>
-              <span className="font-mono text-[10px] text-slate-500">v1.0</span>
+              <span className="font-mono text-[10px] text-slate-400">v1.0</span>
             </div>
           </div>
         </aside>
 
         {/* Main Chat Interface */}
-        <main className="flex-1 flex flex-col bg-slate-950 relative overflow-hidden">
+        <main className="flex-1 flex flex-col bg-slate-50 relative overflow-hidden">
           {/* Top Bar: LibreChat-Style Model Selector & Clean Status */}
-          <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/40 px-6 py-2.5 z-30">
+          <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-2.5 z-30 shadow-sm">
             <div className="flex items-center gap-3">
               {/* LibreChat-Style Interactive Model Selector */}
               <div className="relative" ref={modelDropdownRef}>
@@ -570,71 +691,71 @@ export const Chat: React.FC = () => {
                     <>
                       <button
                         onClick={() => setIsModelSelectorOpen(!isModelSelectorOpen)}
-                        className="flex items-center gap-2.5 rounded-xl border border-slate-700 bg-slate-850 hover:border-sky-500/50 hover:bg-slate-800 px-3 py-1.5 text-xs text-white transition shadow-sm group"
+                        className="flex items-center gap-2.5 rounded-xl border border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50 px-3 py-1.5 text-xs text-slate-900 transition shadow-sm group"
                       >
-                        <span className={`h-2 w-2 rounded-full ${activeModelObj.is_free ? 'bg-emerald-400' : 'bg-purple-400'} animate-pulse`} />
-                        <span className="font-semibold text-slate-100 group-hover:text-sky-300 transition max-w-[200px] truncate">
+                        <span className={`h-2 w-2 rounded-full ${activeModelObj.is_free ? 'bg-emerald-600' : 'bg-indigo-600'}`} />
+                        <span className="font-semibold text-slate-900 max-w-[200px] truncate">
                           {activeModelObj.name}
                         </span>
                         <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
                           activeModelObj.is_free
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                         }`}>
                           {activeModelObj.is_free ? 'FREE' : 'PAID'}
                         </span>
-                        <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${isModelSelectorOpen ? 'rotate-180 text-sky-400' : ''}`} />
+                        <ChevronDown className={`h-3.5 w-3.5 text-slate-500 transition-transform duration-200 ${isModelSelectorOpen ? 'rotate-180 text-slate-900' : ''}`} />
                       </button>
 
                       {/* Dropdown Popover */}
                       {isModelSelectorOpen && (
-                        <div className="absolute left-0 mt-2 w-[460px] max-w-[95vw] rounded-2xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-xl shadow-2xl z-50 overflow-hidden text-xs flex flex-col">
+                        <div className="absolute left-0 mt-2 w-[460px] max-w-[95vw] rounded-2xl border border-slate-200 bg-white shadow-xl z-50 overflow-hidden text-xs flex flex-col">
                           {/* Search Header */}
-                          <div className="p-3 border-b border-slate-800 bg-slate-950/60 flex items-center gap-2">
+                          <div className="p-3 border-b border-slate-200 bg-slate-50 flex items-center gap-2">
                             <Search className="h-4 w-4 text-slate-400 shrink-0" />
                             <input
                               type="text"
                               value={modelSearchQuery}
                               onChange={e => setModelSearchQuery(e.target.value)}
                               placeholder="Search OpenRouter models by name or provider..."
-                              className="w-full bg-transparent text-slate-100 placeholder-slate-500 outline-none text-xs"
+                              className="w-full bg-transparent text-slate-900 placeholder-slate-400 outline-none text-xs"
                               autoFocus
                             />
                             {modelSearchQuery && (
-                              <button onClick={() => setModelSearchQuery('')} className="text-slate-400 hover:text-white">
+                              <button onClick={() => setModelSearchQuery('')} className="text-slate-400 hover:text-slate-700">
                                 <X className="h-3.5 w-3.5" />
                               </button>
                             )}
                           </div>
 
                           {/* Free / Paid Filter Tabs */}
-                          <div className="flex items-center gap-1 p-2 border-b border-slate-800 bg-slate-900/80">
+                          <div className="flex items-center gap-1 p-2 border-b border-slate-200 bg-white">
                             <button
                               onClick={() => setModelFilterTab('free')}
-                              className={`flex-1 py-1 px-2.5 rounded-lg text-center font-medium transition ${
+                              className={`flex-1 py-1 px-2.5 rounded-lg text-center font-semibold transition ${
                                 modelFilterTab === 'free'
-                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold'
-                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : 'text-slate-600 hover:bg-slate-100'
                               }`}
                             >
-                              ✨ Free Models ({freeCount})
+                              Free Models ({freeCount})
                             </button>
                             <button
                               onClick={() => setModelFilterTab('paid')}
-                              className={`flex-1 py-1 px-2.5 rounded-lg text-center font-medium transition ${
+                              className={`flex-1 py-1 px-2.5 rounded-lg text-center font-semibold transition ${
                                 modelFilterTab === 'paid'
-                                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold'
-                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                  : 'text-slate-600 hover:bg-slate-100'
                               }`}
                             >
-                              💎 Paid Models ({paidCount})
+                              Paid Models ({paidCount})
                             </button>
                             <button
                               onClick={() => setModelFilterTab('all')}
-                              className={`flex-1 py-1 px-2.5 rounded-lg text-center font-medium transition ${
+                              className={`flex-1 py-1 px-2.5 rounded-lg text-center font-semibold transition ${
                                 modelFilterTab === 'all'
-                                  ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30 font-semibold'
-                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                                  ? 'bg-slate-900 text-white'
+                                  : 'text-slate-600 hover:bg-slate-100'
                               }`}
                             >
                               All ({availableModels.length})
@@ -642,9 +763,9 @@ export const Chat: React.FC = () => {
                           </div>
 
                           {/* Scrollable Model Cards List */}
-                          <div className="max-h-72 overflow-y-auto p-2 space-y-1 divide-y divide-slate-800/40">
+                          <div className="max-h-72 overflow-y-auto p-2 space-y-1 divide-y divide-slate-100">
                             {displayedModels.length === 0 ? (
-                              <div className="py-8 text-center text-slate-500">
+                              <div className="py-8 text-center text-slate-400">
                                 No models matching "{modelSearchQuery}"
                               </div>
                             ) : (
@@ -660,33 +781,33 @@ export const Chat: React.FC = () => {
                                     }}
                                     className={`w-full text-left p-2.5 rounded-xl transition flex items-start justify-between gap-3 ${
                                       isSelected
-                                        ? 'bg-sky-500/15 border border-sky-500/30 text-white'
-                                        : 'hover:bg-slate-800/60 text-slate-300 hover:text-white'
+                                        ? 'bg-slate-100 border border-slate-300 text-slate-900'
+                                        : 'hover:bg-slate-50 text-slate-700'
                                     }`}
                                   >
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center gap-2">
-                                        <span className="font-semibold text-white text-xs truncate">{m.name}</span>
+                                        <span className="font-bold text-slate-900 text-xs truncate">{m.name}</span>
                                         <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0 ${
                                           m.is_free
-                                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                            : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                                         }`}>
                                           {m.is_free ? 'FREE' : 'PAID'}
                                         </span>
                                       </div>
-                                      <div className="text-[11px] text-slate-400 font-mono mt-0.5 truncate">{m.id}</div>
+                                      <div className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">{m.id}</div>
                                       {m.description && (
-                                        <p className="text-[11px] text-slate-400 mt-1 line-clamp-1">{m.description}</p>
+                                        <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">{m.description}</p>
                                       )}
                                     </div>
                                     <div className="shrink-0 flex items-center gap-1.5 pt-0.5">
                                       {m.context_length > 0 && (
-                                        <span className="text-[10px] text-slate-500 bg-slate-800/80 px-1.5 py-0.5 rounded font-mono">
+                                        <span className="text-[10px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded font-mono border border-slate-200">
                                           {Math.round(m.context_length / 1024)}k ctx
                                         </span>
                                       )}
-                                      {isSelected && <Check className="h-4 w-4 text-emerald-400 shrink-0" />}
+                                      {isSelected && <Check className="h-4 w-4 text-emerald-600 shrink-0" />}
                                     </div>
                                   </button>
                                 );
@@ -695,13 +816,13 @@ export const Chat: React.FC = () => {
                           </div>
 
                           {/* Custom Model ID Direct Input */}
-                          <div className="p-3 border-t border-slate-800 bg-slate-950/80 flex items-center gap-2">
+                          <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center gap-2">
                             <input
                               type="text"
                               value={customModelInput}
                               onChange={e => setCustomModelInput(e.target.value)}
                               placeholder="Or enter custom OpenRouter model ID..."
-                              className="flex-1 bg-slate-850 border border-slate-750 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-sky-500"
+                              className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 placeholder-slate-400 outline-none focus:border-slate-900"
                             />
                             <button
                               onClick={() => {
@@ -714,7 +835,7 @@ export const Chat: React.FC = () => {
                                 }
                               }}
                               disabled={!customModelInput.trim()}
-                              className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white font-medium text-xs transition"
+                              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white font-semibold text-xs transition"
                             >
                               Apply
                             </button>
@@ -732,18 +853,18 @@ export const Chat: React.FC = () => {
                   setTempApiKeyInput(openRouterApiKey);
                   setIsApiKeyModalOpen(true);
                 }}
-                className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs transition ${
+                className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition ${
                   openRouterApiKey
-                    ? 'border-emerald-500/30 bg-emerald-950/20 text-emerald-300 hover:border-emerald-500/50'
-                    : 'border-slate-700 bg-slate-850 text-slate-300 hover:border-slate-600 hover:text-white'
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
                 }`}
                 title="Configure OpenRouter API Key"
               >
-                <Key className="h-3.5 w-3.5 text-amber-400" />
+                <Key className="h-3.5 w-3.5 text-amber-600" />
                 <span className="hidden sm:inline">{openRouterApiKey ? 'Custom Key' : 'API Key'}</span>
               </button>
 
-              <span className="hidden lg:inline text-[11px] text-slate-400">
+              <span className="hidden lg:inline text-[11px] font-medium text-slate-500">
                 Live: Memgraph (7687) • PostgreSQL (5433) • MongoDB (27017) • Redis (6379)
               </span>
             </div>
@@ -751,10 +872,10 @@ export const Chat: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={clearCurrentChat}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-850 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-600 hover:text-white transition"
+                className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
                 title="Clear messages in this conversation"
               >
-                <RotateCcw className="h-3.5 w-3.5 text-slate-400" />
+                <RotateCcw className="h-3.5 w-3.5 text-slate-500" />
                 <span>Clear</span>
               </button>
             </div>
@@ -762,30 +883,30 @@ export const Chat: React.FC = () => {
 
           {/* Quick API Key Modal */}
           {isApiKeyModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-              <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl text-xs space-y-4 animate-in fade-in zoom-in-95 duration-150">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+              <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl text-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                   <div className="flex items-center gap-2">
-                    <Key className="h-4 w-4 text-amber-400" />
-                    <h3 className="font-bold text-white text-sm">OpenRouter API Configuration</h3>
+                    <Key className="h-4 w-4 text-amber-600" />
+                    <h3 className="font-bold text-slate-900 text-sm">OpenRouter API Configuration</h3>
                   </div>
-                  <button onClick={() => setIsApiKeyModalOpen(false)} className="text-slate-400 hover:text-white">
+                  <button onClick={() => setIsApiKeyModalOpen(false)} className="text-slate-400 hover:text-slate-700">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
 
-                <p className="text-slate-300 leading-relaxed">
-                  Enter your personal OpenRouter API key to call free and paid models with multi-step reasoning. Leave blank to use server environment key or the direct local engine.
+                <p className="text-slate-600 leading-relaxed">
+                  Enter your personal OpenRouter API key to call free and paid models with multi-step reasoning. Leave blank to use the server environment key.
                 </p>
 
                 <div>
-                  <label className="block text-slate-400 font-semibold mb-1">OpenRouter API Key (sk-or-v1-...)</label>
+                  <label className="block text-slate-700 font-semibold mb-1">OpenRouter API Key (sk-or-v1-...)</label>
                   <input
                     type="password"
                     value={tempApiKeyInput}
                     onChange={e => setTempApiKeyInput(e.target.value)}
                     placeholder="sk-or-v1-..."
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white placeholder-slate-500 outline-none focus:border-sky-500 text-xs font-mono"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-900 placeholder-slate-400 outline-none focus:border-slate-900 text-xs font-mono"
                   />
                 </div>
 
@@ -797,14 +918,14 @@ export const Chat: React.FC = () => {
                         localStorage.removeItem('ginny_openrouter_api_key');
                         setIsApiKeyModalOpen(false);
                       }}
-                      className="px-3 py-1.5 rounded-lg border border-rose-500/30 text-rose-300 hover:bg-rose-950/20 text-xs transition mr-auto"
+                      className="px-3 py-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-semibold transition mr-auto"
                     >
                       Remove Key
                     </button>
                   )}
                   <button
                     onClick={() => setIsApiKeyModalOpen(false)}
-                    className="px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 text-xs transition"
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition"
                   >
                     Cancel
                   </button>
@@ -819,7 +940,7 @@ export const Chat: React.FC = () => {
                       }
                       setIsApiKeyModalOpen(false);
                     }}
-                    className="px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition"
+                    className="px-4 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition"
                   >
                     Save Key
                   </button>
@@ -832,13 +953,13 @@ export const Chat: React.FC = () => {
           <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
             {activeConversation.messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto space-y-6 py-12">
-                <div className="rounded-2xl border border-sky-500/20 bg-sky-950/20 p-4 shadow-xl shadow-sky-500/5">
-                  <Sparkles className="h-10 w-10 text-sky-400 mx-auto" />
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <Sparkles className="h-9 w-9 text-slate-900 mx-auto" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-white">SQL Ginny Intelligence Assistant</h2>
-                  <p className="mt-2 text-xs text-slate-400 leading-relaxed">
-                    Query PostgreSQL & MongoDB collections, execute BFS/DFS pathfinding over the Memgraph topology,
+                  <h2 className="text-xl font-bold text-slate-900">SQL Ginny Intelligence Assistant</h2>
+                  <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+                    Query PostgreSQL & MongoDB collections, execute unbounded BFS/DFS pathfinding over the Memgraph topology,
                     and preview cross-DB join results with 10-minute Redis caching.
                   </p>
                 </div>
@@ -855,13 +976,13 @@ export const Chat: React.FC = () => {
                     <button
                       key={idx}
                       onClick={() => handleSendMessage(s.query)}
-                      className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300 hover:border-sky-500/40 hover:bg-slate-800 transition"
+                      className="rounded-xl border border-slate-200 bg-white p-3.5 text-xs text-slate-700 hover:border-slate-400 hover:shadow-sm transition"
                     >
-                      <div className="font-semibold text-white mb-1 flex items-center justify-between">
+                      <div className="font-bold text-slate-900 mb-1 flex items-center justify-between">
                         <span>{s.label}</span>
-                        <ArrowRight className="h-3 w-3 text-sky-400" />
+                        <ArrowRight className="h-3.5 w-3.5 text-slate-500" />
                       </div>
-                      <p className="text-[11px] text-slate-400 line-clamp-2">{s.query}</p>
+                      <p className="text-[11px] text-slate-500 line-clamp-2">{s.query}</p>
                     </button>
                   ))}
                 </div>
@@ -875,7 +996,7 @@ export const Chat: React.FC = () => {
                   }`}
                 >
                   {msg.role === 'assistant' && (
-                    <div className="h-8 w-8 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center shrink-0 shadow-md">
+                    <div className="h-8 w-8 rounded-xl bg-slate-900 flex items-center justify-center shrink-0 shadow-sm">
                       <Sparkles className="h-4 w-4 text-white" />
                     </div>
                   )}
@@ -883,7 +1004,7 @@ export const Chat: React.FC = () => {
                   <div className={`space-y-3 max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                     {/* User bubble */}
                     {msg.role === 'user' ? (
-                      <div className="rounded-2xl bg-sky-600 px-4 py-3 text-xs text-white shadow-sm leading-relaxed whitespace-pre-wrap">
+                      <div className="rounded-2xl bg-slate-900 px-4 py-3 text-xs text-white shadow-sm leading-relaxed whitespace-pre-wrap">
                         {msg.content}
                       </div>
                     ) : (
@@ -895,20 +1016,20 @@ export const Chat: React.FC = () => {
                             {msg.tools.map((t, idx) => (
                               <div
                                 key={idx}
-                                className="rounded-xl border border-slate-800 bg-slate-900/80 p-3 text-xs space-y-2"
+                                className="rounded-xl border border-slate-200 bg-white p-3 text-xs space-y-2 shadow-sm"
                               >
                                 <div className="flex items-center justify-between font-mono text-[11px]">
-                                  <span className="flex items-center gap-2 text-sky-300 font-semibold">
-                                    <Database className="h-3.5 w-3.5 text-sky-400" />
+                                  <span className="flex items-center gap-2 text-slate-900 font-bold">
+                                    <Database className="h-3.5 w-3.5 text-slate-700" />
                                     {t.tool}
                                   </span>
                                   {t.status === 'running' ? (
-                                    <span className="text-amber-400 flex items-center gap-1 animate-pulse">
-                                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                    <span className="text-amber-600 font-semibold flex items-center gap-1 animate-pulse">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
                                       Executing...
                                     </span>
                                   ) : (
-                                    <span className="text-emerald-400 flex items-center gap-1">
+                                    <span className="text-emerald-600 font-semibold flex items-center gap-1">
                                       <CheckCircle2 className="h-3.5 w-3.5" />
                                       Done
                                     </span>
@@ -916,20 +1037,20 @@ export const Chat: React.FC = () => {
                                 </div>
 
                                 {t.args && Object.keys(t.args).length > 0 && (
-                                  <div className="text-[11px] text-slate-400 font-mono bg-slate-950 p-2 rounded-lg">
+                                  <div className="text-[11px] text-slate-600 font-mono bg-slate-50 p-2 rounded-lg border border-slate-200">
                                     {JSON.stringify(t.args, null, 2)}
                                   </div>
                                 )}
 
                                 {t.result && (
-                                  <div className="text-[11px] text-slate-300">
+                                  <div className="text-[11px] text-slate-700">
                                     {t.result.hops !== undefined && (
-                                      <div className="text-sky-300 font-medium">
+                                      <div className="text-slate-900 font-semibold">
                                         Shortest Path ({t.result.hops} hops): {t.result.path_sequence?.join(' ➔ ')}
                                       </div>
                                     )}
                                     {t.result.sql_join_template && (
-                                      <div className="font-mono text-[10px] text-indigo-300 bg-slate-950 p-2 rounded mt-1">
+                                      <div className="font-mono text-[10px] text-slate-800 bg-slate-50 border border-slate-200 p-2 rounded mt-1">
                                         {t.result.sql_join_template}
                                       </div>
                                     )}
@@ -942,7 +1063,7 @@ export const Chat: React.FC = () => {
 
                         {/* Assistant text message */}
                         {msg.content && (
-                          <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 text-xs text-slate-200 leading-relaxed shadow-sm whitespace-pre-wrap">
+                          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-800 leading-relaxed shadow-sm whitespace-pre-wrap">
                             {msg.content}
                           </div>
                         )}
@@ -953,16 +1074,16 @@ export const Chat: React.FC = () => {
                             {msg.resultIds.map(resId => (
                               <div
                                 key={resId}
-                                className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3.5 text-xs space-y-2.5"
+                                className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs space-y-2.5"
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-2">
-                                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                                    <span className="font-semibold text-emerald-200">
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                    <span className="font-bold text-emerald-900">
                                       Result Cached in Redis (10m TTL)
                                     </span>
                                   </div>
-                                  <span className="font-mono text-[11px] bg-emerald-900/40 text-emerald-300 px-2 py-0.5 rounded border border-emerald-700/50">
+                                  <span className="font-mono text-[11px] bg-white text-emerald-800 px-2 py-0.5 rounded border border-emerald-200">
                                     ID: {resId}
                                   </span>
                                 </div>
@@ -970,7 +1091,7 @@ export const Chat: React.FC = () => {
                                 <div className="flex items-center gap-2 pt-1">
                                   <button
                                     onClick={() => handleOpenPreview(resId)}
-                                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1 font-semibold text-white hover:bg-emerald-500 transition shadow-sm text-xs"
+                                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700 transition shadow-sm text-xs"
                                   >
                                     <ExternalLink className="h-3.5 w-3.5" />
                                     Preview Top 5 Rows
@@ -980,7 +1101,7 @@ export const Chat: React.FC = () => {
                                     href={`${API_URL}/api/preview/${resId}/download?format=csv`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-850 px-2.5 py-1 text-slate-300 hover:text-white transition text-xs"
+                                    className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 transition text-xs"
                                   >
                                     <Download className="h-3 w-3" />
                                     <span>CSV</span>
@@ -990,7 +1111,7 @@ export const Chat: React.FC = () => {
                                     href={`${API_URL}/api/preview/${resId}/download?format=json`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-850 px-2.5 py-1 text-slate-300 hover:text-white transition text-xs"
+                                    className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 transition text-xs"
                                   >
                                     <Download className="h-3 w-3" />
                                     <span>JSON</span>
@@ -1005,8 +1126,8 @@ export const Chat: React.FC = () => {
                   </div>
 
                   {msg.role === 'user' && (
-                    <div className="h-8 w-8 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
-                      <UserIcon className="h-4 w-4 text-slate-300" />
+                    <div className="h-8 w-8 rounded-xl bg-slate-200 border border-slate-300 flex items-center justify-center shrink-0">
+                      <UserIcon className="h-4 w-4 text-slate-700" />
                     </div>
                   )}
                 </div>
@@ -1016,7 +1137,7 @@ export const Chat: React.FC = () => {
           </div>
 
           {/* Bottom Chat Input Bar */}
-          <div className="border-t border-slate-800 bg-slate-900/60 p-4">
+          <div className="border-t border-slate-200 bg-white p-4">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1037,7 +1158,7 @@ export const Chat: React.FC = () => {
                   }}
                   placeholder="Ask SQL Ginny about tables, join paths, or cross-database queries..."
                   rows={2}
-                  className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-xs text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+                  className="w-full resize-none rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-xs text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
                 />
               </div>
 
@@ -1045,7 +1166,7 @@ export const Chat: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleStopStream}
-                  className="rounded-xl bg-rose-600 px-4 py-3 text-xs font-semibold text-white hover:bg-rose-500 transition shadow-sm flex items-center gap-1.5 h-[52px]"
+                  className="rounded-xl bg-rose-600 px-4 py-3 text-xs font-semibold text-white hover:bg-rose-700 transition shadow-sm flex items-center gap-1.5 h-[52px]"
                 >
                   <Square className="h-4 w-4 fill-white" />
                   <span>Stop</span>
@@ -1054,7 +1175,7 @@ export const Chat: React.FC = () => {
                 <button
                   type="submit"
                   disabled={!inputMessage.trim()}
-                  className="rounded-xl bg-sky-600 px-5 py-3 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-40 transition shadow-sm flex items-center gap-1.5 h-[52px]"
+                  className="rounded-xl bg-slate-900 px-5 py-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40 transition shadow-sm flex items-center gap-1.5 h-[52px]"
                 >
                   <Send className="h-4 w-4" />
                   <span>Send</span>

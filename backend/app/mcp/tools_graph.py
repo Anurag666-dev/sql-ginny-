@@ -39,7 +39,7 @@ def generate_ready_sql_and_recipe(path: Dict[str, Any]) -> Dict[str, Any]:
         "cross_db_steps": cross_db_steps
     }
 
-def tool_bfs_shortest_join_path(start_entity: str, target_entity: str, max_hops: int = 5) -> Dict[str, Any]:
+def tool_bfs_shortest_join_path(start_entity: str, target_entity: str, max_hops: int = None) -> Dict[str, Any]:
     """
     [CRITICAL AI TOOL - BFS PATHFINDER]
     Breadth-First Search over the Memgraph database topology to find the shortest, most efficient join path.
@@ -85,7 +85,7 @@ def tool_bfs_shortest_join_path(start_entity: str, target_entity: str, max_hops:
         )
     }
 
-def tool_dfs_all_join_paths(start_entity: str, target_entity: str, max_hops: int = 5) -> Dict[str, Any]:
+def tool_dfs_all_join_paths(start_entity: str, target_entity: str, max_hops: int = None) -> Dict[str, Any]:
     """
     [CRITICAL AI TOOL - DFS EXPLORER]
     Depth-First Search over the Memgraph topology to explore all alternative, multi-hop, or deep relational

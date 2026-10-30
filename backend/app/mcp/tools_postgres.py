@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.db.postgres import execute_readonly_query
 from app.db.redis_client import store_query_result, delete_query_result
 
@@ -15,10 +15,11 @@ def serialize_db_record(record: dict) -> dict:
             out[k] = v
     return out
 
-def tool_run_postgres_raw_query(query: str) -> Dict[str, Any]:
+def tool_run_postgres_raw_query(query: str, exclude_columns: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Executes a raw SQL query against PostgreSQL using restricted credentials (ginny_app_user).
-    Stores results in Redis with a 10-minute TTL and returns top 5 rows for user confirmation.
+    Prunes any RAG-excluded columns (e.g. customer_code, email), stores results in Redis with a 10-minute TTL,
+    and returns top 5 rows for user confirmation.
     """
     cleaned_query = query.strip()
     if not cleaned_query:
@@ -32,6 +33,18 @@ def tool_run_postgres_raw_query(query: str) -> Dict[str, Any]:
         
     rows = execute_readonly_query(cleaned_query)
     records = [serialize_db_record(dict(r)) for r in rows] if rows else []
+
+    if exclude_columns and records:
+        clean_exclude = {ec.lower().strip() for ec in exclude_columns if ec}
+        for r in records:
+            for k in list(r.keys()):
+                k_l = k.lower()
+                if (
+                    k_l in clean_exclude
+                    or any(k_l == ec or k_l.endswith(f"_{ec}") or f"{ec}" in k_l for ec in clean_exclude)
+                ):
+                    del r[k]
+
     total_count = len(records)
     
     # Store in Redis / Cache with 10-minute (600s) TTL

@@ -41,30 +41,59 @@ def get_effective_inference_key(key: str) -> str:
     return k
 
 def call_openrouter(messages: List[Dict[str, str]], api_key: str, model: str, temperature: float = 0.1) -> str:
-    """Helper to execute an OpenRouter LLM call and return text content with auto-retry and key resolution."""
+    """Helper to execute an OpenRouter LLM call and return text content with auto-retry, key resolution, and resilient model fallback."""
     effective_key = get_effective_inference_key(api_key)
-    effective_model = (model or settings.OPENROUTER_MODEL or "google/gemini-3.5-flash-lite").strip()
+    effective_model = (model or settings.OPENROUTER_MODEL or "google/gemini-2.5-flash").strip()
+
+    # Candidate chain: requested model first, followed by verified active models
+    candidates = [effective_model]
+    for fb in ["google/gemini-2.5-flash", "google/gemini-3.5-flash-lite", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "openrouter/free"]:
+        if fb not in candidates:
+            candidates.append(fb)
 
     headers = {
-        "Authorization": f"Bearer {effective_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:5173",
         "X-Title": "SQL Ginny"
     }
-    payload = {
-        "model": effective_model,
-        "messages": messages,
-        "temperature": temperature
-    }
+    if effective_key:
+        headers["Authorization"] = f"Bearer {effective_key}"
+
+    last_error = None
     with httpx.Client(timeout=25.0) as client:
-        res = client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-        if res.status_code == 401 and settings.OPENROUTER_API_KEY and effective_key != settings.OPENROUTER_API_KEY:
-            # Fallback to server inference key
-            headers["Authorization"] = f"Bearer {settings.OPENROUTER_API_KEY}"
+        for current_model in candidates:
+            payload = {
+                "model": current_model,
+                "messages": messages,
+                "temperature": temperature
+            }
             res = client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-        res.raise_for_status()
-        choice = res.json().get("choices", [{}])[0]
-        return choice.get("message", {}).get("content", "").strip()
+            if res.status_code == 401 and settings.OPENROUTER_API_KEY:
+                # Fallback to server inference key
+                server_key = get_effective_inference_key(settings.OPENROUTER_API_KEY)
+                if server_key:
+                    headers["Authorization"] = f"Bearer {server_key}"
+                    res = client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+
+            if res.status_code == 200:
+                choice = res.json().get("choices", [{}])[0]
+                return choice.get("message", {}).get("content", "").strip()
+
+            # Extract detailed error message from response
+            try:
+                err_data = res.json().get("error", {})
+                err_msg = err_data.get("message", res.text)
+            except Exception:
+                err_msg = res.text
+            last_error = f"{res.status_code} ({err_msg})"
+
+            # If 404 (model deprecated/unavailable) or 400 (invalid model ID) or 429 (rate limit), continue to next candidate
+            if res.status_code in (400, 404, 429):
+                continue
+            else:
+                break
+
+    raise RuntimeError(f"OpenRouter inference failed: {last_error}")
 
 def extract_json(raw_text: str) -> Dict[str, Any]:
     """Cleanly parse JSON from an AI response, stripping any markdown code fences."""
@@ -167,7 +196,7 @@ def step2_ground_schemas_in_databases(expected_tables: List[str]) -> Dict[str, A
     # MongoDB check
     try:
         db = get_sync_mongo_db()
-        all_colls = [c for c in db.list_collection_names() if not c.startswith("system.")]
+        all_colls = [c for c in db.list_collection_names() if not c.startswith("system.") and c not in ("chats", "user_conversations")]
         for cname in all_colls:
             if any(cand.rstrip("s").lower() in cname.lower() for cand in expected_tables):
                 sample = db[cname].find_one()
@@ -188,20 +217,26 @@ def ai_step3_select_traversal_endpoints(
 ) -> Dict[str, Any]:
     """
     Step 3: AI Call
-    Ask AI how to traverse the knowledge graph: identify the start node, end node,
-    and whether BFS or DFS should be used.
+    Ask AI how to traverse the knowledge graph: identify one or more (start_node, end_node) pairs
+    so queries spanning 3+ tables across multiple branches discover all required join pathways.
     """
     if len(grounded_entities) <= 1:
         single = grounded_entities[0] if grounded_entities else "customers"
-        return {"start_node": single, "end_node": single, "algorithm": "bfs"}
+        return {
+            "start_node": single,
+            "end_node": single,
+            "pairs": [{"start_node": single, "end_node": single}],
+            "algorithm": "dfs"
+        }
 
     sys_prompt = (
         "You are a database graph traversal planner. Given the user query and the list of verified database entities,\n"
-        "determine the best 'start_node' and 'end_node' to find connecting join paths across the database.\n"
+        "determine the primary 'start_node', 'end_node', and 'pairs' of (start_node, end_node) needed to connect all relevant entities across the database.\n"
         "Available verified entities: " + ", ".join(grounded_entities) + "\n"
         "Return pure JSON with:\n"
-        "- 'start_node': string entity name\n"
-        "- 'end_node': string entity name\n"
+        "- 'start_node': string primary start entity\n"
+        "- 'end_node': string primary target entity\n"
+        "- 'pairs': [{'start_node': '...', 'end_node': '...'}, ...] (include all entity pairs needed to connect the query)\n"
         "- 'algorithm': 'bfs' or 'dfs'"
     )
     messages = [
@@ -212,32 +247,43 @@ def ai_step3_select_traversal_endpoints(
     data = extract_json(raw)
     start_node = data.get("start_node") or grounded_entities[0]
     end_node = data.get("end_node") or grounded_entities[-1]
-    algo = data.get("algorithm", "bfs")
-    return {"start_node": start_node, "end_node": end_node, "algorithm": algo}
+    algo = data.get("algorithm", "dfs")
 
-def step4_discover_graph_paths(start_node: str, end_node: str) -> List[Dict[str, Any]]:
+    raw_pairs = data.get("pairs")
+    pairs: List[Dict[str, str]] = []
+    if isinstance(raw_pairs, list):
+        for p in raw_pairs:
+            if isinstance(p, dict) and p.get("start_node") and p.get("end_node"):
+                pairs.append({"start_node": p["start_node"], "end_node": p["end_node"]})
+    if not pairs:
+        pairs.append({"start_node": start_node, "end_node": end_node})
+
+    return {"start_node": start_node, "end_node": end_node, "pairs": pairs, "algorithm": algo}
+
+
+def step4_discover_graph_paths(
+    start_node: str,
+    end_node: str,
+    pairs: Optional[List[Dict[str, str]]] = None
+) -> List[Dict[str, Any]]:
     """
     Step 4: Memgraph Execution
-    Run BFS and DFS over the live Memgraph graph to fetch all candidate join paths and bridge tables.
+    Runs native Memgraph undirected Cypher path discovery (`*BFS` + `*1..6` all-paths) across
+    all requested (start_node, end_node) pairs and merges unique paths via dictionary union (`d_map | b_map`).
     """
-    if start_node == end_node:
-        return [{
-            "path_sequence": [start_node],
-            "hops": 0,
-            "join_summary": f"Direct table query on {start_node}",
-            "intermediate_entities": []
-        }]
+    target_pairs = pairs if pairs else [{"start_node": start_node, "end_node": end_node}]
+    combined_map: Dict[tuple, Dict[str, Any]] = {}
 
-    b_paths = bfs_paths(start_node, end_node, max_depth=6) or []
-    d_paths = dfs_paths(start_node, end_node, max_depth=6) or []
-    all_paths = []
-    seen = set()
-    for p in b_paths + d_paths:
-        seq = tuple(p.get("path_sequence", []))
-        if seq not in seen:
-            seen.add(seq)
-            all_paths.append(p)
+    for pair in target_pairs:
+        s_node = pair.get("start_node", start_node)
+        e_node = pair.get("end_node", end_node)
+        if not s_node or not e_node or s_node == e_node:
+            continue
+        b_map = bfs_paths(s_node, e_node, return_map=True) or {}
+        d_map = dfs_paths(s_node, e_node, return_map=True) or {}
+        combined_map = combined_map | d_map | b_map
 
+    all_paths = list(combined_map.values())
     return all_paths if all_paths else [{
         "path_sequence": [start_node],
         "hops": 0,
@@ -340,21 +386,19 @@ def ai_step5_synthesize_query(
         f"{dictionary_prompt}\n\n"
         "Query Formulation Rules:\n"
         "1. Write valid PostgreSQL SELECT statement using table aliases and exact foreign keys from the join paths.\n"
-        "2. If user requests 'from each <entity>' (e.g. from each warehouse), use DISTINCT ON (<entity>.id) and ORDER BY <entity>.id, <order_col> DESC.\n"
-        "3. If user mentions specific entities or names (e.g. 'Bhiwandi Western', 'Sneha', 'Nair'), apply WHERE with ILIKE or =.\n"
-        "4. If 'last' or 'most recent' is requested, order by the date/timestamp descending.\n"
-        "5. If customer privacy/confidentiality rule applies, omit customer_id.\n"
-        "6. CRITICAL CROSS-DB RULE: Entities prefixed with 'mongo:' or collections (such as 'product_reviews', 'customer_profiles', 'support_tickets') are stored in MongoDB (Port 27017), NOT PostgreSQL.\n"
-        "   - NEVER write 'JOIN product_reviews' or 'JOIN mongo:...' inside the PostgreSQL 'sql_query'!\n"
-        "   - If MongoDB data is requested (e.g. reviews, ratings, feedback, profiles):\n"
-        "     * Set 'query_type': 'cross_db'\n"
-        "     * In 'sql_query', select ONLY from PostgreSQL tables and ALWAYS include the relational join key in the SELECT columns (e.g. `p.sku`, `c.customer_code`)\n"
-        "     * NEVER include MongoDB fields or aliases (e.g. `f.feedback_text` or `pr.rating`) in the PostgreSQL SELECT clause. PostgreSQL cannot resolve them. They are merged automatically by the cross-database joiner!\n"
-        "     * Specify 'mongo_collection': name of collection (e.g. 'product_reviews')\n"
-        "     * Specify 'pg_join_key': PostgreSQL column to join on (e.g. 'sku' or 'customer_code')\n"
-        "     * Specify 'mongo_join_key': MongoDB field to join on (e.g. 'sku' or 'customer_code')\n"
-        "7. To link warehouses to products/items, always use 'product_inventory' (warehouses -> product_inventory -> products). Do NOT use 'purchase_orders' unless the user specifically asks for supplier procurement or purchase orders.\n"
-        "8. Do NOT add WHERE conditions on order/shipment status (e.g. status = 'COMPLETED') unless the user explicitly requested that status.\n\n"
+        "   - Column Verification: Strictly check 'Available Grounded Schemas & Columns' before writing any column. ONLY reference columns that explicitly exist in the grounded schema.\n"
+        "2. If user requests 'from each <entity>', use DISTINCT ON (<entity>.id) and ORDER BY <entity>.id, <order_col> DESC.\n"
+        "3. Extract all entity names, literal values, or filters mentioned in the query and apply WHERE conditions using ILIKE with wildcards (e.g. ILIKE '%keyword%') or = against the appropriate schema columns.\n"
+        "4. If 'last', 'latest', or 'most recent' is requested, order by the date/timestamp descending.\n"
+        "5. STRICT BUSINESS RAG GOVERNANCE: Carefully enforce every rule in 'Business RAG Guidelines'. If any rule forbids showing confidential columns, list all such column names in 'exclude_columns' and do NOT select them in SQL unless required internally as a join key.\n"
+        "6. CROSS-DATABASE QUERY RULES (when combining PostgreSQL and MongoDB):\n"
+        "   - Set 'query_type': 'cross_db'\n"
+        "   - 'sql_query' must contain ONLY PostgreSQL tables. NEVER write 'JOIN <mongo_collection>' in SQL!\n"
+        "   - In the PostgreSQL SELECT clause, ALWAYS include the join key column (e.g. c.email or p.sku) so the cross-database joiner can match it.\n"
+        "   - If using DISTINCT ON (<col>), remember PostgreSQL syntax requires: SELECT DISTINCT ON (<col>) <col>, <join_key>, ... FROM ...\n"
+        "   - Do NOT select MongoDB fields in the SQL SELECT clause; they will be attached automatically in memory.\n"
+        "   - Specify 'mongo_collection', 'pg_join_key' (column in SQL), and 'mongo_join_key' (field in Mongo doc).\n"
+        "7. Do NOT add WHERE conditions on status fields unless the user explicitly requested that status filter.\n\n"
         "Return pure JSON with:\n"
         "{\n"
         "  'query_type': 'postgres' | 'mongo' | 'cross_db',\n"
@@ -363,6 +407,7 @@ def ai_step5_synthesize_query(
         "  'mongo_filter_json': string or null,\n"
         "  'pg_join_key': string or null,\n"
         "  'mongo_join_key': string or null,\n"
+        "  'exclude_columns': ['col1', 'col2'],\n"
         "  'selected_path': ['table1', 'table2', ...],\n"
         "  'explanation': 'Short explanation of why this query fulfills the user request.'\n"
         "}"
@@ -404,20 +449,33 @@ def plan_dynamic_query(
     all_valid = valid_pg + valid_mongo
 
     if not all_valid:
-        # Fallback to general base tables if AI gave unusual names
-        expected_tables = ["customers", "orders", "products", "warehouses"]
-        grounded_schemas = step2_ground_schemas_in_databases(expected_tables)
-        valid_pg = list(grounded_schemas.get("pg_tables", {}).keys())
-        valid_mongo = list(grounded_schemas.get("mongo_collections", {}).keys())
-        all_valid = valid_pg + valid_mongo
+        # If Step 1 gave unusual names not in DB, fallback to introspecting primary database entities
+        try:
+            from app.db.postgres import execute_readonly_query
+            default_pg = [
+                r["table_name"] for r in (
+                    execute_readonly_query(
+                        "SELECT table_name FROM information_schema.tables "
+                        "WHERE table_schema NOT IN ('information_schema', 'pg_catalog') "
+                        "AND table_name NOT IN ('app_users', 'spatial_ref_sys') LIMIT 5;"
+                    ) or []
+                )
+            ]
+            grounded_schemas = step2_ground_schemas_in_databases(default_pg)
+            valid_pg = list(grounded_schemas.get("pg_tables", {}).keys())
+            valid_mongo = list(grounded_schemas.get("mongo_collections", {}).keys())
+            all_valid = valid_pg + valid_mongo
+        except Exception:
+            all_valid = []
 
-    # Step 3: AI Call (Graph Traversal Endpoints)
+    # Step 3: AI Call (Graph Traversal Endpoints & Multi-Entity Pairs)
     endpoints = ai_step3_select_traversal_endpoints(prompt, all_valid, effective_key, effective_model)
     start_node = endpoints.get("start_node", all_valid[0] if all_valid else "customers")
     end_node = endpoints.get("end_node", all_valid[-1] if len(all_valid) > 1 else start_node)
+    entity_pairs = endpoints.get("pairs")
 
-    # Step 4: Discover all Memgraph Paths
-    all_paths = step4_discover_graph_paths(start_node, end_node)
+    # Step 4: Discover all Memgraph Paths across all entity pairs
+    all_paths = step4_discover_graph_paths(start_node, end_node, pairs=entity_pairs)
 
     # Step 5: Final AI Synthesis
     final_plan = ai_step5_synthesize_query(
@@ -440,52 +498,36 @@ def plan_dynamic_query(
         or ""
     ).strip()
 
-    # Safeguard: If the LLM failed to emit a valid SELECT query, generate a clean SELECT statement
+    # Safeguard: If the LLM failed to emit a valid SELECT query, generate a clean SELECT statement from grounded entities
     if not sql_query.upper().startswith(("SELECT", "WITH", "EXPLAIN")):
-        target_tbl = start_node if start_node in valid_pg else (valid_pg[0] if valid_pg else "warehouses")
-        cols = list(grounded_schemas.get("pg_tables", {}).get(target_tbl, {}).keys())
-        cols_str = ", ".join(cols) if cols else "*"
-        sql_query = f"SELECT {cols_str} FROM {target_tbl}"
+        target_tbl = start_node if start_node in valid_pg else (valid_pg[0] if valid_pg else None)
+        if target_tbl:
+            cols = list(grounded_schemas.get("pg_tables", {}).get(target_tbl, {}).keys())
+            cols_str = ", ".join(cols) if cols else "*"
+            sql_query = f"SELECT {cols_str} FROM {target_tbl}"
+        else:
+            sql_query = "SELECT 1"
 
+    # Cross-DB Routing: Respect query_type from AI plan
     mongo_collection = final_plan.get("mongo_collection")
     pg_join_key = final_plan.get("pg_join_key")
     mongo_join_key = final_plan.get("mongo_join_key")
-
-    # Cross-DB Detection & Guardrail: Ensure queries requesting Mongo collections are properly routed
-    mongo_colls = list(grounded_schemas.get("mongo_collections", {}).keys())
-    needs_cross_db = (
-        query_type == "cross_db"
-        or bool(mongo_collection)
-        or any(mc in prompt.lower() or mc.rstrip("s") in prompt.lower() or "review" in prompt.lower() for mc in mongo_colls)
-    )
-
-    if needs_cross_db:
-        query_type = "cross_db"
-        if not mongo_collection:
-            mongo_collection = mongo_colls[0] if mongo_colls else "product_reviews"
-        if not pg_join_key:
-            pg_join_key = "sku" if any(k in prompt.lower() for k in ["product", "item", "sku", "bought"]) else "customer_code"
-        if not mongo_join_key:
-            mongo_join_key = pg_join_key
-
-        # Guardrail: Strip any illegal JOIN on MongoDB collections in the PostgreSQL SQL query
-        for mc in (mongo_colls or ["product_reviews"]):
-            sql_query = re.sub(
-                rf'(?i)\s+(?:LEFT\s+|INNER\s+|RIGHT\s+|FULL\s+)?JOIN\s+(?:mongo:)?{re.escape(mc)}\b[^\n;]*(?:ON\s+[^\n;]+)?',
-                '',
-                sql_query
-            )
-            # Remove direct references to mongo-only columns if aliased in PostgreSQL SELECT
-            sql_query = re.sub(r'(?i),\s*\w+\.(?:rating|headline|content|telemetry)\b', '', sql_query)
-            sql_query = re.sub(r'(?i)\b\w+\.(?:rating|headline|content|telemetry)\s*,\s*', '', sql_query)
-
-        # Ensure the join key is projected in the PostgreSQL SELECT query for the hash joiner
-        if pg_join_key not in sql_query.lower():
-            col_ref = f"p.{pg_join_key}" if ("products p" in sql_query or "products AS p" in sql_query) else pg_join_key
-            sql_query = re.sub(r'(?i)SELECT\s+', f'SELECT {col_ref}, ', sql_query, count=1)
+    is_cross_db = (query_type == "cross_db" or bool(mongo_collection))
 
     selected_path = final_plan.get("selected_path") or (all_paths[0].get("path_sequence") if all_paths else [start_node])
     explanation = final_plan.get("explanation", f"AI synthesized query for: '{prompt}'")
+
+    # Combine AI-returned exclude_columns with active RAG privacy/governance rules
+    raw_exclude = final_plan.get("exclude_columns") or []
+    exclude_set = {str(c).strip() for c in raw_exclude if c}
+    for r_ctx in (rag_contexts or []):
+        r_text = f"{r_ctx.get('struct_name', '')} {r_ctx.get('description', '')} {r_ctx.get('sql_expression', '')}".lower()
+        if any(w in r_text for w in ["never", "hide", "omit", "exclude", "confidential", "do not show", "not show"]):
+            if any(w in r_text for w in ["customer_code", "cusotmer code", "customer code", "pg_customer_code", "confidential"]):
+                exclude_set.update(["customer_code", "pg_customer_code", "customer_id"])
+            if "email" in r_text:
+                exclude_set.update(["email", "pg_email", "author_email", "product_reviews_author_email", "customer_email"])
+    exclude_columns = sorted(exclude_set)
 
     return {
         "title": "Query Result",
@@ -504,11 +546,12 @@ def plan_dynamic_query(
         "matched_entities": [start_node, end_node],
         "path_sequence": selected_path,
         "hops": len(selected_path) - 1 if len(selected_path) > 1 else 0,
-        "is_cross_db": (query_type == "cross_db"),
+        "is_cross_db": is_cross_db,
         "target_mongo_collection": mongo_collection,
         "cross_join_key": (pg_join_key, mongo_join_key) if pg_join_key else None,
         "secondary_joins": [],
-        "exclude_columns": [],
+        "exclude_columns": exclude_columns,
+        "exclude_customer_code": any("customer" in c.lower() for c in exclude_columns),
         "generated_sql": sql_query,
         "mongo_filter": json.loads(final_plan.get("mongo_filter_json", "{}")) if isinstance(final_plan.get("mongo_filter_json"), str) else {},
         "intermediate_entities": selected_path[1:-1] if len(selected_path) > 2 else [],

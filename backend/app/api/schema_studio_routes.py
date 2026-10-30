@@ -335,7 +335,7 @@ async def introspect_live_databases():
         try:
             db = get_sync_mongo_db()
             for coll in db.list_collection_names():
-                if not coll.startswith("system."):
+                if not coll.startswith("system.") and coll not in ("chats", "user_conversations"):
                     mongo_entities.append({
                         "name": coll,
                         "system": "MongoDB",

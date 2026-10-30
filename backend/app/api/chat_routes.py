@@ -1,6 +1,7 @@
 import json
 import asyncio
 import re
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
@@ -8,6 +9,8 @@ from pydantic import BaseModel
 import httpx
 
 from app.config import settings
+from app.auth.security import get_current_user
+from app.db.mongo import get_sync_mongo_db
 from app.mcp.tools_business_rag import tool_retrieve_query_context, tool_add_or_update_business_context
 from app.mcp.tools_graph import tool_bfs_shortest_join_path, tool_dfs_all_join_paths, tool_get_entity_relationships
 from app.mcp.tools_postgres import tool_run_postgres_raw_query, tool_invalidate_query_cache
@@ -32,14 +35,6 @@ AVAILABLE_MODELS = [
         "is_free": True
     },
     {
-        "id": "nvidia/nemotron-3-super-120b-a12b:free",
-        "name": "NVIDIA: Nemotron 3 Super (free)",
-        "provider": "NVIDIA",
-        "description": "NVIDIA ultra-large 120B reasoning model for intricate relational reasoning.",
-        "context_length": 131072,
-        "is_free": True
-    },
-    {
         "id": "nvidia/nemotron-3.5-lightning:free",
         "name": "NVIDIA: Nemotron 3.5 Lightning (free)",
         "provider": "NVIDIA",
@@ -56,32 +51,32 @@ AVAILABLE_MODELS = [
         "is_free": True
     },
     {
-        "id": "google/gemma-4-31b-it:free",
-        "name": "Google: Gemma 4 31B (free)",
+        "id": "google/gemini-2.5-flash",
+        "name": "Google: Gemini 2.5 Flash",
         "provider": "Google",
-        "description": "Google's open-weights 31B instruction-tuned reasoning model.",
-        "context_length": 131072,
-        "is_free": True
-    },
-    {
-        "id": "google/gemini-2.0-flash-001",
-        "name": "Gemini 2.0 Flash",
-        "provider": "Google",
-        "description": "High-intelligence flagship model with native function calling and massive context.",
+        "description": "Google's ultra-fast, high-intelligence model for multi-stage SQL reasoning.",
         "context_length": 1048576,
         "is_free": False
     },
     {
-        "id": "anthropic/claude-3.5-sonnet",
-        "name": "Claude 3.5 Sonnet",
+        "id": "google/gemini-3.5-flash-lite",
+        "name": "Google: Gemini 3.5 Flash Lite",
+        "provider": "Google",
+        "description": "Next-gen lightweight multimodal and reasoning model with high speed and low cost.",
+        "context_length": 1048576,
+        "is_free": False
+    },
+    {
+        "id": "anthropic/claude-sonnet-4.5",
+        "name": "Anthropic: Claude Sonnet 4.5",
         "provider": "Anthropic",
-        "description": "Premier reasoning intelligence with exceptional multi-step query decomposition.",
+        "description": "Anthropic's latest high-capability reasoning model for database schema synthesis.",
         "context_length": 200000,
         "is_free": False
     },
     {
         "id": "meta-llama/llama-3.3-70b-instruct",
-        "name": "Llama 3.3 70B Instruct",
+        "name": "Meta: Llama 3.3 70B Instruct",
         "provider": "Meta",
         "description": "Flagship 70-billion parameter reasoning model with native function calling.",
         "context_length": 131072,
@@ -97,7 +92,7 @@ AVAILABLE_MODELS = [
     },
     {
         "id": "deepseek/deepseek-chat",
-        "name": "DeepSeek V3",
+        "name": "DeepSeek: DeepSeek V3",
         "provider": "DeepSeek",
         "description": "Powerful 671B MoE architecture with advanced SQL reasoning.",
         "context_length": 65536,
@@ -335,7 +330,10 @@ def execute_tool_by_name(tool_name: str, arguments: Dict[str, Any]) -> Dict[str,
                 max_hops=arguments.get("max_hops", 5)
             )
         elif tool_name == "run_postgres_raw_query":
-            return tool_run_postgres_raw_query(query=arguments.get("sql_query", ""))
+            return tool_run_postgres_raw_query(
+                query=arguments.get("sql_query", ""),
+                exclude_columns=arguments.get("exclude_columns")
+            )
         elif tool_name == "run_mongo_raw_query":
             return tool_run_mongo_raw_query(
                 collection_name=arguments.get("collection_name", ""),
@@ -358,7 +356,7 @@ def execute_tool_by_name(tool_name: str, arguments: Dict[str, Any]) -> Dict[str,
             user_q = arguments.get("user_query") or arguments.get("query", "")
             return tool_retrieve_query_context(
                 user_query=user_q,
-                top_k=arguments.get("top_k", 3)
+                top_k=arguments.get("top_k", 4)
             )
         elif tool_name == "get_database_metadata":
             return tool_get_database_metadata(target_system=arguments.get("target_system", "ALL"))
@@ -489,7 +487,7 @@ async def stream_chat(req: StreamChatRequest):
 
         # 2. Database Discovery / Metadata
         elif any(k in prompt_lower for k in ["table", "schema", "metadata", "collection", "discover", "all tables", "all collections"]):
-            m_res = execute_tool_by_name("get_database_metadata", {"target_system": "ALL"})
+            m_res = await asyncio.to_thread(execute_tool_by_name, "get_database_metadata", {"target_system": "ALL"})
             pg_tbls = [t["table_name"] for t in m_res.get("postgresql", {}).get("tables_and_views", [])]
             m_colls = list(m_res.get("mongodb", {}).keys())
             reply_text = (
@@ -503,16 +501,16 @@ async def stream_chat(req: StreamChatRequest):
 
         # 3. Pure Multi-Stage AI Pipeline
         else:
-            # Step A: Retrieve RAG Domain Context via pgvector
-            yield f"data: {safe_json_dumps({'type': 'tool_start', 'tool': 'retrieve_query_context', 'args': {'user_query': latest_prompt, 'top_k': 2}})}\n\n"
-            r_res = execute_tool_by_name("retrieve_query_context", {"user_query": latest_prompt, "top_k": 2})
+            # Step A: Retrieve RAG Domain Context via pgvector (top_k=4)
+            yield f"data: {safe_json_dumps({'type': 'tool_start', 'tool': 'retrieve_query_context', 'args': {'user_query': latest_prompt, 'top_k': 4}})}\n\n"
+            r_res = await asyncio.to_thread(execute_tool_by_name, "retrieve_query_context", {"user_query": latest_prompt, "top_k": 4})
             yield f"data: {safe_json_dumps({'type': 'tool_result', 'tool': 'retrieve_query_context', 'result': r_res})}\n\n"
             matched_rag = r_res.get("matched_contexts", [])
 
-            # Step B: Autonomous Schema-Driven Planning with Live Schemas & RAG Rules
+            # Step B: Autonomous Schema-Driven Planning with Live Schemas & RAG Rules (run in worker thread so FastAPI event loop never blocks)
             from app.services.dynamic_query_engine import plan_dynamic_query
             try:
-                plan = plan_dynamic_query(latest_prompt, rag_contexts=matched_rag, api_key=api_key, model=model)
+                plan = await asyncio.to_thread(plan_dynamic_query, latest_prompt, matched_rag, api_key, model)
             except Exception as e:
                 err_msg = f"AI Planning Error: {str(e)}"
                 yield f"data: {safe_json_dumps({'type': 'error', 'message': err_msg})}\n\n"
@@ -530,7 +528,7 @@ async def stream_chat(req: StreamChatRequest):
 
             if hops > 0:
                 cand_paths = plan.get("all_candidate_paths", [])
-                yield f"data: {safe_json_dumps({'type': 'tool_start', 'tool': 'dfs_explore_all_join_paths', 'args': {'start_entity': start_ent, 'target_entity': target_ent, 'max_hops': 6}})}\n\n"
+                yield f"data: {safe_json_dumps({'type': 'tool_start', 'tool': 'dfs_explore_all_join_paths', 'args': {'start_entity': start_ent, 'target_entity': target_ent}})}\n\n"
                 yield f"data: {safe_json_dumps({'type': 'tool_result', 'tool': 'dfs_explore_all_join_paths', 'result': {'total_paths_discovered': len(cand_paths), 'selected_semantic_path': plan['path_sequence'], 'all_candidate_paths': cand_paths, 'rationale': plan.get('path_selection_rationale')}})}\n\n"
 
             # Step D: Execution
@@ -547,13 +545,13 @@ async def stream_chat(req: StreamChatRequest):
                     "mongo_filter_json": m_filter_json,
                     "pg_join_key": pg_k,
                     "mongo_join_key": mg_k,
-                    "join_type": "INNER",
+                    "join_type": "LEFT",
                     "secondary_joins": secondary_joins,
                     "exclude_columns": exclude_columns
                 }
 
                 yield f"data: {safe_json_dumps({'type': 'tool_start', 'tool': 'cross_db_query_and_join', 'args': tool_args})}\n\n"
-                exec_res = execute_tool_by_name("cross_db_query_and_join", tool_args)
+                exec_res = await asyncio.to_thread(execute_tool_by_name, "cross_db_query_and_join", tool_args)
                 yield f"data: {safe_json_dumps({'type': 'tool_result', 'tool': 'cross_db_query_and_join', 'result': exec_res})}\n\n"
                 res_id = exec_res.get("result_id")
                 if res_id:
@@ -570,8 +568,8 @@ async def stream_chat(req: StreamChatRequest):
                 )
                 if secondary_joins:
                     reply_text += f"   - **MongoDB Secondary Joins:** " + ", ".join(f"`{s['mongo_collection']}` on `{s['pg_join_key']} = {s['mongo_join_key']}`" for s in secondary_joins) + "\n"
-                if plan.get("exclude_customer_code"):
-                    reply_text += f"   - **Customer Confidentiality Applied:** Customer code / ID excluded from output as requested.\n"
+                if exclude_columns:
+                    reply_text += f"   - **RAG Governance Applied (Excluded Columns):** {', '.join(f'`{c}`' for c in exclude_columns)}\n"
                 reply_text += (
                     f"   - **Total Matched Records:** {exec_res.get('total_joined_records', 0)}\n\n"
                     f"3. **Dynamic SQL Executed:**\n"
@@ -590,8 +588,10 @@ async def stream_chat(req: StreamChatRequest):
 
             else:
                 # Pure PostgreSQL query
-                yield f"data: {safe_json_dumps({'type': 'tool_start', 'tool': 'run_postgres_raw_query', 'args': {'sql_query': plan['generated_sql']}})}\n\n"
-                exec_res = execute_tool_by_name("run_postgres_raw_query", {"sql_query": plan["generated_sql"]})
+                exclude_columns = plan.get("exclude_columns", [])
+                pg_args = {"sql_query": plan["generated_sql"], "exclude_columns": exclude_columns}
+                yield f"data: {safe_json_dumps({'type': 'tool_start', 'tool': 'run_postgres_raw_query', 'args': pg_args})}\n\n"
+                exec_res = await asyncio.to_thread(execute_tool_by_name, "run_postgres_raw_query", pg_args)
                 yield f"data: {safe_json_dumps({'type': 'tool_result', 'tool': 'run_postgres_raw_query', 'result': exec_res})}\n\n"
                 res_id = exec_res.get("result_id")
                 if res_id:
@@ -632,3 +632,98 @@ async def stream_chat(req: StreamChatRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+class SaveConversationsRequest(BaseModel):
+    conversations: List[Dict[str, Any]]
+    active_convo_id: Optional[str] = None
+
+
+@router.get("/conversations")
+async def get_user_conversations(current_user: dict = Depends(get_current_user)):
+    """
+    Fetches all saved chat conversations for the authenticated user from MongoDB ('chats' collection).
+    Strictly isolated by user_id from the verified JWT token.
+    """
+    user_id = current_user.get("id")
+    user_email = current_user.get("sub")
+    try:
+        db = get_sync_mongo_db()
+        coll = db["chats"]
+        doc = coll.find_one({"user_id": user_id}, {"_id": 0})
+        if not doc and user_email:
+            doc = coll.find_one({"user_email": user_email}, {"_id": 0})
+        if doc:
+            return {
+                "user_id": user_id,
+                "conversations": doc.get("conversations", []),
+                "active_convo_id": doc.get("active_convo_id")
+            }
+        return {
+            "user_id": user_id,
+            "conversations": [],
+            "active_convo_id": None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load chats from MongoDB: {str(e)}")
+
+
+@router.put("/conversations")
+async def save_user_conversations(
+    req: SaveConversationsRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Upserts the authenticated user's multiple chat conversations into MongoDB ('chats' collection)
+    linked strictly to their user_id.
+    """
+    user_id = current_user.get("id")
+    user_email = current_user.get("sub")
+    try:
+        db = get_sync_mongo_db()
+        coll = db["chats"]
+        coll.update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "user_id": user_id,
+                    "user_email": user_email,
+                    "conversations": req.conversations,
+                    "active_convo_id": req.active_convo_id,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+            },
+            upsert=True
+        )
+        return {
+            "status": "saved",
+            "user_id": user_id,
+            "count": len(req.conversations)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save chats to MongoDB: {str(e)}")
+
+
+@router.delete("/conversations/{convo_id}")
+async def delete_user_conversation(
+    convo_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Deletes a specific conversation by ID from the authenticated user's document in the MongoDB 'chats' collection.
+    """
+    user_id = current_user.get("id")
+    try:
+        db = get_sync_mongo_db()
+        coll = db["chats"]
+        coll.update_one(
+            {"user_id": user_id},
+            {
+                "$pull": {"conversations": {"id": convo_id}},
+                "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}
+            }
+        )
+        return {"status": "deleted", "convo_id": convo_id, "user_id": user_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete chat from MongoDB: {str(e)}")
+

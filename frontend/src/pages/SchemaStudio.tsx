@@ -14,12 +14,8 @@ import {
   Sparkles,
   RefreshCw,
   ArrowRight,
-  ShieldAlert,
-  Info,
   Check,
   X,
-  FileCode2,
-  ListPlus,
   BookOpen
 } from 'lucide-react';
 
@@ -86,7 +82,6 @@ export const SchemaStudio: React.FC = () => {
   const [relDesc, setRelDesc] = useState<string>('');
   const [isSavingRel, setIsSavingRel] = useState<boolean>(false);
 
-  // Load Catalog from Memgraph
   const loadCatalog = async () => {
     try {
       setLoading(true);
@@ -108,13 +103,11 @@ export const SchemaStudio: React.FC = () => {
     loadCatalog();
   }, []);
 
-  // Flash notification helper
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(null), 4000);
   };
 
-  // Open Add Entity Modal
   const handleOpenAddEntity = () => {
     setIsEditingEntity(false);
     setEntityName('');
@@ -128,7 +121,6 @@ export const SchemaStudio: React.FC = () => {
     setIsEntityModalOpen(true);
   };
 
-  // Open Edit Entity Modal
   const handleOpenEditEntity = (ent: EntityItem) => {
     setIsEditingEntity(true);
     setEntityName(ent.name);
@@ -142,7 +134,6 @@ export const SchemaStudio: React.FC = () => {
     setIsEntityModalOpen(true);
   };
 
-  // Auto-introspect columns directly from live DB
   const handleIntrospectColumns = async () => {
     if (!entityName.trim()) {
       alert('Please enter a table or collection name first.');
@@ -154,7 +145,6 @@ export const SchemaStudio: React.FC = () => {
         params: { system: entitySystem, entity_name: entityName.trim() }
       });
       if (res.data?.columns && res.data.columns.length > 0) {
-        // Merge with existing descriptions if any
         const existingMap = new Map(entityColumns.map(c => [c.name, c.description]));
         const merged: ColumnDictItem[] = res.data.columns.map((c: any) => ({
           name: c.name,
@@ -175,7 +165,6 @@ export const SchemaStudio: React.FC = () => {
     }
   };
 
-  // Add empty column row
   const handleAddColumnRow = () => {
     setEntityColumns(prev => [
       ...prev,
@@ -183,7 +172,6 @@ export const SchemaStudio: React.FC = () => {
     ]);
   };
 
-  // Update specific column in modal
   const handleUpdateColumnField = (index: number, field: keyof ColumnDictItem, value: any) => {
     setEntityColumns(prev => {
       const next = [...prev];
@@ -192,12 +180,10 @@ export const SchemaStudio: React.FC = () => {
     });
   };
 
-  // Remove column row
   const handleRemoveColumnRow = (index: number) => {
     setEntityColumns(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Save Entity
   const handleSaveEntity = async () => {
     if (!entityName.trim()) {
       alert('Entity name is required.');
@@ -228,7 +214,6 @@ export const SchemaStudio: React.FC = () => {
     }
   };
 
-  // Delete Entity
   const handleDeleteEntity = async (name: string) => {
     if (!confirm(`Are you sure you want to delete entity '${name}' and all its connected relationships from Memgraph?`)) {
       return;
@@ -242,7 +227,6 @@ export const SchemaStudio: React.FC = () => {
     }
   };
 
-  // Save Relationship
   const handleSaveRelationship = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!relSource || !relTarget || !relFromField || !relToField) {
@@ -278,7 +262,6 @@ export const SchemaStudio: React.FC = () => {
     }
   };
 
-  // Delete Relationship
   const handleDeleteRelationship = async (rel: RelationshipItem) => {
     if (!confirm(`Delete relationship ${rel.source} -[${rel.type}]-> ${rel.target}?`)) {
       return;
@@ -294,7 +277,6 @@ export const SchemaStudio: React.FC = () => {
     }
   };
 
-  // Filtered entities for display
   const filteredEntities = entities.filter(ent => {
     const matchesSys = systemFilter === 'ALL' || ent.system.toLowerCase() === systemFilter.toLowerCase();
     const matchesSearch = !searchQuery ||
@@ -304,30 +286,29 @@ export const SchemaStudio: React.FC = () => {
     return matchesSys && matchesSearch;
   });
 
-  // Selected source/target entity objects for relationship dropdowns
   const selectedSourceEntity = entities.find(e => e.name === relSource);
   const selectedTargetEntity = entities.find(e => e.name === relTarget);
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 font-sans">
+    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900 font-sans">
       <Navbar />
 
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between pb-6 border-b border-slate-800 gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between pb-6 border-b border-slate-200 gap-4">
           <div>
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-tr from-cyan-600 via-sky-600 to-indigo-600 shadow-lg shadow-sky-500/20">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm">
                 <Layers className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2.5">
                   Schema & Knowledge Studio
-                  <span className="rounded-full bg-cyan-500/10 px-2.5 py-0.5 text-xs font-semibold text-cyan-400 border border-cyan-500/20">
+                  <span className="rounded-md bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 border border-slate-300">
                     Memgraph Port 7687
                   </span>
                 </h1>
-                <p className="text-sm text-slate-400">
+                <p className="text-sm text-slate-500">
                   Register entities, define column data-type dictionaries with business semantics, and establish join edges for multi-hop AI query formulation.
                 </p>
               </div>
@@ -338,18 +319,18 @@ export const SchemaStudio: React.FC = () => {
             <button
               onClick={loadCatalog}
               disabled={loading}
-              className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 transition"
+              className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 transition shadow-sm"
               title="Reload catalog from Memgraph"
             >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-sky-400' : ''}`} />
+              <RefreshCw className={`h-4 w-4 text-slate-700 ${loading ? 'animate-spin' : ''}`} />
               <span>Refresh</span>
             </button>
 
             <button
               onClick={handleOpenAddEntity}
-              className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-sky-500/25 hover:from-sky-400 hover:to-indigo-500 transition"
+              className="flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 transition"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-4 w-4 text-white" />
               <span>Register Entity</span>
             </button>
           </div>
@@ -357,36 +338,36 @@ export const SchemaStudio: React.FC = () => {
 
         {/* Notifications */}
         {errorMsg && (
-          <div className="mt-4 flex items-center gap-3 rounded-lg border border-rose-500/30 bg-rose-950/40 p-4 text-sm text-rose-300">
-            <AlertCircle className="h-5 w-5 text-rose-400 shrink-0" />
+          <div className="mt-4 flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
             <div className="flex-1">{errorMsg}</div>
-            <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-rose-200">
+            <button onClick={() => setErrorMsg(null)} className="text-rose-600 hover:text-rose-800">
               <X className="h-4 w-4" />
             </button>
           </div>
         )}
 
         {successMsg && (
-          <div className="mt-4 flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-950/40 p-4 text-sm text-emerald-300">
-            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+          <div className="mt-4 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+            <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
             <div className="flex-1">{successMsg}</div>
           </div>
         )}
 
         {/* Studio Tabs */}
-        <div className="mt-6 flex items-center justify-between border-b border-slate-800">
+        <div className="mt-6 flex items-center justify-between border-b border-slate-200">
           <div className="flex gap-2">
             <button
               onClick={() => setActiveTab('entities')}
               className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition ${
                 activeTab === 'entities'
-                  ? 'border-sky-500 text-sky-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'border-slate-900 text-slate-900'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
               }`}
             >
               <Database className="h-4 w-4" />
               <span>Entities & Column Dictionaries</span>
-              <span className="ml-1.5 rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+              <span className="ml-1.5 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-800">
                 {entities.length}
               </span>
             </button>
@@ -395,13 +376,13 @@ export const SchemaStudio: React.FC = () => {
               onClick={() => setActiveTab('relationships')}
               className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition ${
                 activeTab === 'relationships'
-                  ? 'border-sky-500 text-sky-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
+                  ? 'border-slate-900 text-slate-900'
+                  : 'border-transparent text-slate-500 hover:text-slate-900'
               }`}
             >
               <Network className="h-4 w-4" />
               <span>Relationship Edge Studio</span>
-              <span className="ml-1.5 rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-300">
+              <span className="ml-1.5 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-800">
                 {relationships.length}
               </span>
             </button>
@@ -412,31 +393,31 @@ export const SchemaStudio: React.FC = () => {
         {activeTab === 'entities' && (
           <div className="mt-6 space-y-6">
             {/* Filters Bar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <div className="relative w-full sm:w-80">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Search entities, columns, comments..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-4 text-xs text-slate-200 placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-9 pr-4 text-xs text-slate-900 placeholder-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none"
                 />
               </div>
 
               <div className="flex items-center gap-2 w-full sm:w-auto">
-                <span className="text-xs text-slate-400">Database:</span>
+                <span className="text-xs font-semibold text-slate-600">Database:</span>
                 {(['ALL', 'PostgreSQL', 'MongoDB'] as const).map(sys => (
                   <button
                     key={sys}
                     onClick={() => setSystemFilter(sys)}
                     className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                       systemFilter === sys
-                        ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
-                        : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    {sys === 'PostgreSQL' ? '🐘 Postgres' : sys === 'MongoDB' ? '🍃 Mongo' : 'All'}
+                    {sys === 'PostgreSQL' ? 'PostgreSQL' : sys === 'MongoDB' ? 'MongoDB' : 'All'}
                   </button>
                 ))}
               </div>
@@ -451,22 +432,22 @@ export const SchemaStudio: React.FC = () => {
                 return (
                   <div
                     key={ent.name}
-                    className="flex flex-col justify-between rounded-xl border border-slate-800 bg-slate-900/80 p-5 hover:border-slate-700 transition shadow-sm hover:shadow-md"
+                    className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 hover:border-slate-300 transition shadow-sm hover:shadow-md"
                   >
                     <div>
                       {/* Card Header */}
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-base font-bold text-white tracking-tight">{ent.name}</span>
-                            <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold border ${
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-base font-bold text-slate-900 tracking-tight">{ent.name}</span>
+                            <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold border ${
                               isMongo
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                                : 'bg-sky-500/10 text-sky-400 border-sky-500/20'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-slate-100 text-slate-800 border-slate-300'
                             }`}>
-                              {isMongo ? '🍃 Mongo' : '🐘 Postgres'}
+                              {isMongo ? 'MONGO' : 'PG'}
                             </span>
-                            <span className="rounded-md bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400">
+                            <span className="rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-600">
                               {ent.type}
                             </span>
                           </div>
@@ -475,14 +456,14 @@ export const SchemaStudio: React.FC = () => {
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => handleOpenEditEntity(ent)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-sky-400 transition"
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition"
                             title="Edit dictionary & meaning"
                           >
                             <Edit2 className="h-3.5 w-3.5" />
                           </button>
                           <button
                             onClick={() => handleDeleteEntity(ent.name)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:bg-rose-950/40 hover:text-rose-400 transition"
+                            className="p-1.5 rounded-lg text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition"
                             title="Delete entity from Memgraph"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -491,18 +472,18 @@ export const SchemaStudio: React.FC = () => {
                       </div>
 
                       {/* Business Description */}
-                      <p className="mt-2.5 text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
-                        {ent.description || <span className="italic text-slate-500">No business meaning registered. Click edit to add context.</span>}
+                      <p className="mt-2.5 text-xs text-slate-600 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                        {ent.description || <span className="italic text-slate-400">No business meaning registered. Click edit to add context.</span>}
                       </p>
 
                       {/* Columns Preview */}
                       <div className="mt-4">
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 mb-2">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 mb-2">
                           <span className="flex items-center gap-1">
-                            <BookOpen className="h-3.5 w-3.5 text-sky-400" />
+                            <BookOpen className="h-3.5 w-3.5 text-slate-700" />
                             Dictionary Columns ({colCount})
                           </span>
-                          <span className="text-[10px] text-slate-500">PK: {ent.primary_key || 'id'}</span>
+                          <span className="text-[10px] font-mono text-slate-500">PK: {ent.primary_key || 'id'}</span>
                         </div>
 
                         <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
@@ -510,22 +491,22 @@ export const SchemaStudio: React.FC = () => {
                             ent.columns.map((c, i) => (
                               <div
                                 key={i}
-                                className="flex items-center justify-between gap-2 p-1.5 rounded bg-slate-950/40 text-xs border border-slate-800/40"
+                                className="flex items-center justify-between gap-2 p-1.5 rounded bg-slate-50 text-xs border border-slate-200"
                               >
                                 <div className="flex items-center gap-1.5 truncate">
-                                  <span className="font-mono font-medium text-slate-200">{c.name}</span>
+                                  <span className="font-mono font-semibold text-slate-900">{c.name}</span>
                                   {c.is_primary_key && (
-                                    <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 rounded border border-amber-500/30">PK</span>
+                                    <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-1 rounded border border-amber-300">PK</span>
                                   )}
-                                  <span className="text-[10px] font-mono text-cyan-400/80">({c.data_type})</span>
+                                  <span className="text-[10px] font-mono text-slate-500">({c.data_type})</span>
                                 </div>
-                                <span className="text-[10px] text-slate-400 truncate max-w-[150px]" title={c.description}>
-                                  {c.description || <span className="text-slate-600 italic">No description</span>}
+                                <span className="text-[10px] text-slate-500 truncate max-w-[150px]" title={c.description}>
+                                  {c.description || <span className="text-slate-400 italic">No description</span>}
                                 </span>
                               </div>
                             ))
                           ) : (
-                            <div className="text-xs text-slate-500 italic p-2">
+                            <div className="text-xs text-slate-400 italic p-2">
                               No columns defined yet. Click edit to auto-populate from live database.
                             </div>
                           )}
@@ -533,10 +514,10 @@ export const SchemaStudio: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+                    <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
                       <button
                         onClick={() => handleOpenEditEntity(ent)}
-                        className="text-xs text-sky-400 hover:text-sky-300 font-medium flex items-center gap-1"
+                        className="text-xs text-slate-900 hover:underline font-bold flex items-center gap-1"
                       >
                         <span>Manage Dictionary</span>
                         <ArrowRight className="h-3 w-3" />
@@ -553,16 +534,15 @@ export const SchemaStudio: React.FC = () => {
         {activeTab === 'relationships' && (
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left: Create/Update Relationship Form */}
-            <div className="lg:col-span-1 bg-slate-900/80 rounded-xl border border-slate-800 p-6 shadow-sm">
-              <div className="flex items-center gap-2 pb-4 border-b border-slate-800 mb-5">
-                <Network className="h-5 w-5 text-sky-400" />
-                <h3 className="text-base font-bold text-white">Define Join Relationship</h3>
+            <div className="lg:col-span-1 bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+              <div className="flex items-center gap-2 pb-4 border-b border-slate-200 mb-5">
+                <Network className="h-5 w-5 text-slate-900" />
+                <h3 className="text-base font-bold text-slate-900">Define Join Relationship</h3>
               </div>
 
               <form onSubmit={handleSaveRelationship} className="space-y-4">
-                {/* Source Entity */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Source Entity (From Node)
                   </label>
                   <select
@@ -572,7 +552,7 @@ export const SchemaStudio: React.FC = () => {
                       setRelFromField('');
                     }}
                     required
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none"
                   >
                     <option value="">-- Select Source Node --</option>
                     {entities.map(e => (
@@ -583,9 +563,8 @@ export const SchemaStudio: React.FC = () => {
                   </select>
                 </div>
 
-                {/* From Column */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Source Join Column / Key
                   </label>
                   {selectedSourceEntity && selectedSourceEntity.columns && selectedSourceEntity.columns.length > 0 ? (
@@ -593,7 +572,7 @@ export const SchemaStudio: React.FC = () => {
                       value={relFromField}
                       onChange={(e) => setRelFromField(e.target.value)}
                       required
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none font-mono"
+                      className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none font-mono"
                     >
                       <option value="">-- Select Column from {relSource} --</option>
                       {selectedSourceEntity.columns.map(c => (
@@ -609,14 +588,13 @@ export const SchemaStudio: React.FC = () => {
                       value={relFromField}
                       onChange={(e) => setRelFromField(e.target.value)}
                       required
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none font-mono"
+                      className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none font-mono"
                     />
                   )}
                 </div>
 
-                {/* Relationship Type Selector */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Relationship Edge Type
                   </label>
                   <div className="grid grid-cols-1 gap-2">
@@ -625,16 +603,16 @@ export const SchemaStudio: React.FC = () => {
                       onClick={() => setRelType('MUST_JOIN')}
                       className={`flex items-center justify-between p-2.5 rounded-lg border text-xs text-left transition ${
                         relType === 'MUST_JOIN'
-                          ? 'border-rose-500/50 bg-rose-950/40 text-rose-300'
-                          : 'border-slate-800 bg-slate-950/40 text-slate-400 hover:bg-slate-800'
+                          ? 'border-slate-900 bg-slate-100 text-slate-900'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                       }`}
                     >
                       <div>
-                        <span className="font-bold flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-rose-500"></span>
+                        <span className="font-bold flex items-center gap-1.5 text-slate-900">
+                          <span className="h-2 w-2 rounded-full bg-rose-600"></span>
                           MUST_JOIN (Strict Foreign Key)
                         </span>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Required relational dependency. Orders must join customers.</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">Required relational dependency. Orders must join customers.</p>
                       </div>
                     </button>
 
@@ -643,16 +621,16 @@ export const SchemaStudio: React.FC = () => {
                       onClick={() => setRelType('CONDITIONAL_JOIN')}
                       className={`flex items-center justify-between p-2.5 rounded-lg border text-xs text-left transition ${
                         relType === 'CONDITIONAL_JOIN'
-                          ? 'border-amber-500/50 bg-amber-950/40 text-amber-300'
-                          : 'border-slate-800 bg-slate-950/40 text-slate-400 hover:bg-slate-800'
+                          ? 'border-slate-900 bg-slate-100 text-slate-900'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                       }`}
                     >
                       <div>
-                        <span className="font-bold flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+                        <span className="font-bold flex items-center gap-1.5 text-slate-900">
+                          <span className="h-2 w-2 rounded-full bg-amber-600"></span>
                           CONDITIONAL_JOIN (Predicate Filtered)
                         </span>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Applies when a specific status/condition matches.</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">Applies when a specific status/condition matches.</p>
                       </div>
                     </button>
 
@@ -661,24 +639,23 @@ export const SchemaStudio: React.FC = () => {
                       onClick={() => setRelType('OPTIONAL_JOIN')}
                       className={`flex items-center justify-between p-2.5 rounded-lg border text-xs text-left transition ${
                         relType === 'OPTIONAL_JOIN'
-                          ? 'border-emerald-500/50 bg-emerald-950/40 text-emerald-300'
-                          : 'border-slate-800 bg-slate-950/40 text-slate-400 hover:bg-slate-800'
+                          ? 'border-slate-900 bg-slate-100 text-slate-900'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                       }`}
                     >
                       <div>
-                        <span className="font-bold flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                        <span className="font-bold flex items-center gap-1.5 text-slate-900">
+                          <span className="h-2 w-2 rounded-full bg-emerald-600"></span>
                           OPTIONAL_JOIN (Enrichment / Cross-DB)
                         </span>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Optional dimension or MongoDB document hash join.</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">Optional dimension or MongoDB document hash join.</p>
                       </div>
                     </button>
                   </div>
                 </div>
 
-                {/* Target Entity */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Target Entity (To Node)
                   </label>
                   <select
@@ -688,7 +665,7 @@ export const SchemaStudio: React.FC = () => {
                       setRelToField('');
                     }}
                     required
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none"
                   >
                     <option value="">-- Select Target Node --</option>
                     {entities.map(e => (
@@ -699,9 +676,8 @@ export const SchemaStudio: React.FC = () => {
                   </select>
                 </div>
 
-                {/* To Column */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Target Join Column / Key
                   </label>
                   {selectedTargetEntity && selectedTargetEntity.columns && selectedTargetEntity.columns.length > 0 ? (
@@ -709,7 +685,7 @@ export const SchemaStudio: React.FC = () => {
                       value={relToField}
                       onChange={(e) => setRelToField(e.target.value)}
                       required
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none font-mono"
+                      className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none font-mono"
                     >
                       <option value="">-- Select Column from {relTarget} --</option>
                       {selectedTargetEntity.columns.map(c => (
@@ -725,28 +701,26 @@ export const SchemaStudio: React.FC = () => {
                       value={relToField}
                       onChange={(e) => setRelToField(e.target.value)}
                       required
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none font-mono"
+                      className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none font-mono"
                     />
                   )}
                 </div>
 
-                {/* Condition Predicate */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Condition Predicate <span className="text-slate-500 font-normal">(Optional)</span>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Condition Predicate <span className="text-slate-400 font-normal">(Optional)</span>
                   </label>
                   <input
                     type="text"
                     placeholder="e.g. status = 'ACTIVE' OR quantity > 0"
                     value={relCondition}
                     onChange={(e) => setRelCondition(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none font-mono"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none font-mono"
                   />
                 </div>
 
-                {/* Description */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Join Business Rationale
                   </label>
                   <textarea
@@ -754,87 +728,87 @@ export const SchemaStudio: React.FC = () => {
                     placeholder="Explain why and when this join applies for the AI planner..."
                     value={relDesc}
                     onChange={(e) => setRelDesc(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-sky-500 focus:outline-none resize-none"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none resize-none"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={isSavingRel}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-600 py-2.5 text-xs font-bold text-white shadow-lg shadow-sky-500/25 hover:from-sky-400 hover:to-indigo-500 transition disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-slate-900 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition disabled:opacity-50"
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-4 w-4 text-white" />
                   <span>{isSavingRel ? 'Saving to Memgraph...' : 'Create / Update Relationship'}</span>
                 </button>
               </form>
             </div>
 
             {/* Right: Active Relationships Table */}
-            <div className="lg:col-span-2 bg-slate-900/80 rounded-xl border border-slate-800 p-6 shadow-sm flex flex-col justify-between">
+            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
               <div>
-                <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
+                <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-4">
                   <div className="flex items-center gap-2">
-                    <Layers className="h-5 w-5 text-indigo-400" />
-                    <h3 className="text-base font-bold text-white">Active Relational Join Edges ({relationships.length})</h3>
+                    <Layers className="h-5 w-5 text-slate-900" />
+                    <h3 className="text-base font-bold text-slate-900">Active Relational Join Edges ({relationships.length})</h3>
                   </div>
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs text-slate-300">
-                    <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+                  <table className="w-full text-left text-xs text-slate-700">
+                    <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
                       <tr>
-                        <th className="py-2.5 px-3">Type</th>
-                        <th className="py-2.5 px-3">Source Node & Key</th>
-                        <th className="py-2.5 px-3 text-center">Join</th>
-                        <th className="py-2.5 px-3">Target Node & Key</th>
-                        <th className="py-2.5 px-3">Condition / Rationale</th>
-                        <th className="py-2.5 px-3 text-right">Action</th>
+                        <th className="py-2.5 px-3 font-bold">Type</th>
+                        <th className="py-2.5 px-3 font-bold">Source Node & Key</th>
+                        <th className="py-2.5 px-3 text-center font-bold">Join</th>
+                        <th className="py-2.5 px-3 font-bold">Target Node & Key</th>
+                        <th className="py-2.5 px-3 font-bold">Condition / Rationale</th>
+                        <th className="py-2.5 px-3 text-right font-bold">Action</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/80">
+                    <tbody className="divide-y divide-slate-200">
                       {relationships.map((rel, idx) => {
                         const isMust = rel.type === 'MUST_JOIN';
                         const isCond = rel.type === 'CONDITIONAL_JOIN';
 
                         return (
-                          <tr key={idx} className="hover:bg-slate-800/40 transition">
+                          <tr key={idx} className="hover:bg-slate-50 transition">
                             <td className="py-2.5 px-3">
                               <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border ${
                                 isMust
-                                  ? 'bg-rose-500/10 text-rose-300 border-rose-500/20'
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
                                   : isCond
-                                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                               }`}>
                                 <span className={`h-1.5 w-1.5 rounded-full ${
-                                  isMust ? 'bg-rose-500' : isCond ? 'bg-amber-500' : 'bg-emerald-500'
+                                  isMust ? 'bg-rose-600' : isCond ? 'bg-amber-600' : 'bg-emerald-600'
                                 }`}></span>
                                 {rel.type}
                               </span>
                             </td>
                             <td className="py-2.5 px-3">
-                              <span className="font-semibold text-white">{rel.source}</span>
-                              <span className="block font-mono text-[10px] text-sky-400">.{rel.from_field}</span>
+                              <span className="font-bold text-slate-900">{rel.source}</span>
+                              <span className="block font-mono text-[10px] text-slate-600">.{rel.from_field}</span>
                             </td>
-                            <td className="py-2.5 px-3 text-center text-slate-500 font-bold">➔</td>
+                            <td className="py-2.5 px-3 text-center text-slate-400 font-bold">➔</td>
                             <td className="py-2.5 px-3">
-                              <span className="font-semibold text-white">{rel.target}</span>
-                              <span className="block font-mono text-[10px] text-cyan-400">.{rel.to_field}</span>
+                              <span className="font-bold text-slate-900">{rel.target}</span>
+                              <span className="block font-mono text-[10px] text-slate-600">.{rel.to_field}</span>
                             </td>
                             <td className="py-2.5 px-3 max-w-xs truncate" title={rel.desc || rel.condition || ''}>
                               {rel.condition && (
-                                <span className="block font-mono text-[10px] text-amber-400 bg-amber-950/30 px-1 rounded">
+                                <span className="block font-mono text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-1 rounded">
                                   WHERE {rel.condition}
                                 </span>
                               )}
-                              <span className="text-[11px] text-slate-400 truncate block">
+                              <span className="text-[11px] text-slate-600 truncate block">
                                 {rel.desc || 'Direct foreign key link.'}
                               </span>
                             </td>
                             <td className="py-2.5 px-3 text-right">
                               <button
                                 onClick={() => handleDeleteRelationship(rel)}
-                                className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 transition"
+                                className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
                                 title="Delete relationship"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -854,18 +828,18 @@ export const SchemaStudio: React.FC = () => {
 
       {/* MODAL: Register / Edit Entity & Column Dictionary */}
       {isEntityModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="relative w-full max-w-3xl rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl my-8">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="relative w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl my-8 text-slate-900">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/20 text-sky-400">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-900 text-white">
                   <Database className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-white">
+                  <h2 className="text-lg font-bold text-slate-900">
                     {isEditingEntity ? `Edit Entity: ${entityName}` : 'Register New Database Entity'}
                   </h2>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     Store table business context and column data-type definitions in Memgraph.
                   </p>
                 </div>
@@ -873,7 +847,7 @@ export const SchemaStudio: React.FC = () => {
 
               <button
                 onClick={() => setIsEntityModalOpen(false)}
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -883,19 +857,19 @@ export const SchemaStudio: React.FC = () => {
               {/* Row 1: Name, System, Type, PK */}
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Entity Name</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Entity Name</label>
                   <input
                     type="text"
                     placeholder="e.g. customer_orders"
                     value={entityName}
                     onChange={(e) => setEntityName(e.target.value)}
                     disabled={isEditingEntity}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none disabled:opacity-60"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none disabled:opacity-60"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Database</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Database</label>
                   <select
                     value={entitySystem}
                     onChange={(e) => {
@@ -909,7 +883,7 @@ export const SchemaStudio: React.FC = () => {
                         setEntityPrimaryKey('id');
                       }
                     }}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none"
                   >
                     <option value="PostgreSQL">PostgreSQL</option>
                     <option value="MongoDB">MongoDB</option>
@@ -917,11 +891,11 @@ export const SchemaStudio: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Entity Type</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Entity Type</label>
                   <select
                     value={entityType}
                     onChange={(e) => setEntityType(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none"
                   >
                     {entitySystem === 'PostgreSQL' ? (
                       <>
@@ -936,40 +910,40 @@ export const SchemaStudio: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Primary Key</label>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Primary Key</label>
                   <input
                     type="text"
                     placeholder="e.g. id, _id"
                     value={entityPrimaryKey}
                     onChange={(e) => setEntityPrimaryKey(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none font-mono"
+                    className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none font-mono"
                   />
                 </div>
               </div>
 
               {/* Row 2: Business Meaning / Description */}
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Business Meaning / High-Level Semantic Description
                 </label>
                 <textarea
                   rows={2}
-                  placeholder="Explain what this table or collection represents in the enterprise domain (e.g. master customer demographic profiles and lifetime value metrics)..."
+                  placeholder="Explain what this table or collection represents in the enterprise domain..."
                   value={entityDescription}
                   onChange={(e) => setEntityDescription(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none resize-none"
+                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-900 focus:border-slate-900 focus:bg-white focus:outline-none resize-none"
                 />
               </div>
 
               {/* Row 3: Column / Field Dictionary Header */}
-              <div className="pt-2 border-t border-slate-800">
+              <div className="pt-2 border-t border-slate-200">
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <BookOpen className="h-4 w-4 text-sky-400" />
+                    <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                      <BookOpen className="h-4 w-4 text-slate-700" />
                       Column & Field Business Dictionary ({entityColumns.length})
                     </h3>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[11px] text-slate-500">
                       Store exact data types and semantic comments for each column so the AI never guesses.
                     </p>
                   </div>
@@ -979,46 +953,46 @@ export const SchemaStudio: React.FC = () => {
                       type="button"
                       onClick={handleIntrospectColumns}
                       disabled={isIntrospecting}
-                      className="flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-950/40 px-3 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-900/60 transition shadow-sm"
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 transition shadow-sm"
                       title="Read live table columns and types from PostgreSQL or MongoDB"
                     >
-                      <Sparkles className={`h-3.5 w-3.5 text-indigo-400 ${isIntrospecting ? 'animate-spin' : ''}`} />
+                      <Sparkles className={`h-3.5 w-3.5 text-slate-700 ${isIntrospecting ? 'animate-spin' : ''}`} />
                       <span>{isIntrospecting ? 'Introspecting...' : 'Auto-Introspect from Live DB'}</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={handleAddColumnRow}
-                      className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition"
+                      className="flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
                     >
-                      <Plus className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5 text-white" />
                       <span>Add Column</span>
                     </button>
                   </div>
                 </div>
 
                 {/* Columns Table */}
-                <div className="overflow-x-auto border border-slate-800 rounded-lg">
-                  <table className="w-full text-left text-xs text-slate-200">
-                    <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-left text-xs text-slate-800">
+                    <thead className="bg-slate-50 text-slate-600 uppercase text-[10px] tracking-wider border-b border-slate-200">
                       <tr>
-                        <th className="py-2 px-3 w-40">Column Name</th>
-                        <th className="py-2 px-3 w-32">Data Type</th>
-                        <th className="py-2 px-3">Business Meaning / Comments</th>
-                        <th className="py-2 px-2 text-center w-12">PK?</th>
+                        <th className="py-2 px-3 w-40 font-bold">Column Name</th>
+                        <th className="py-2 px-3 w-32 font-bold">Data Type</th>
+                        <th className="py-2 px-3 font-bold">Business Meaning / Comments</th>
+                        <th className="py-2 px-2 text-center w-12 font-bold">PK?</th>
                         <th className="py-2 px-2 text-center w-10"></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/80">
+                    <tbody className="divide-y divide-slate-200">
                       {entityColumns.map((col, idx) => (
-                        <tr key={idx} className="hover:bg-slate-800/30">
+                        <tr key={idx} className="hover:bg-slate-50">
                           <td className="py-1.5 px-3">
                             <input
                               type="text"
                               placeholder="column_name"
                               value={col.name}
                               onChange={(e) => handleUpdateColumnField(idx, 'name', e.target.value)}
-                              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white font-mono focus:border-sky-500 focus:outline-none"
+                              className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 font-mono focus:border-slate-900 focus:outline-none"
                             />
                           </td>
                           <td className="py-1.5 px-3">
@@ -1027,7 +1001,7 @@ export const SchemaStudio: React.FC = () => {
                               placeholder="data_type"
                               value={col.data_type}
                               onChange={(e) => handleUpdateColumnField(idx, 'data_type', e.target.value)}
-                              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-cyan-400 font-mono focus:border-sky-500 focus:outline-none"
+                              className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 font-mono focus:border-slate-900 focus:outline-none"
                             />
                           </td>
                           <td className="py-1.5 px-3">
@@ -1036,7 +1010,7 @@ export const SchemaStudio: React.FC = () => {
                               placeholder="e.g. 1 = Active buyer, 0 = Suspended"
                               value={col.description}
                               onChange={(e) => handleUpdateColumnField(idx, 'description', e.target.value)}
-                              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-300 focus:border-sky-500 focus:outline-none"
+                              className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 focus:border-slate-900 focus:outline-none"
                             />
                           </td>
                           <td className="py-1.5 px-2 text-center">
@@ -1044,14 +1018,14 @@ export const SchemaStudio: React.FC = () => {
                               type="checkbox"
                               checked={!!col.is_primary_key}
                               onChange={(e) => handleUpdateColumnField(idx, 'is_primary_key', e.target.checked)}
-                              className="h-3.5 w-3.5 rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-0"
+                              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-0"
                             />
                           </td>
                           <td className="py-1.5 px-2 text-center">
                             <button
                               type="button"
                               onClick={() => handleRemoveColumnRow(idx)}
-                              className="p-1 text-slate-500 hover:text-rose-400"
+                              className="p-1 text-slate-400 hover:text-rose-600"
                               title="Remove column"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -1066,11 +1040,11 @@ export const SchemaStudio: React.FC = () => {
             </div>
 
             {/* Modal Actions */}
-            <div className="mt-6 flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+            <div className="mt-6 flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
               <button
                 type="button"
                 onClick={() => setIsEntityModalOpen(false)}
-                className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-white"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Cancel
               </button>
@@ -1078,9 +1052,9 @@ export const SchemaStudio: React.FC = () => {
               <button
                 type="button"
                 onClick={handleSaveEntity}
-                className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-sky-500/25 hover:from-sky-400 hover:to-indigo-500 transition"
+                className="flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800 transition"
               >
-                <Check className="h-4 w-4" />
+                <Check className="h-4 w-4 text-white" />
                 <span>Save Entity & Dictionary</span>
               </button>
             </div>
