@@ -19,26 +19,7 @@ sys.path.insert(0, PROJECT_DIR)
 sys.path.insert(0, os.path.join(PROJECT_DIR, "backend"))
 sys.path.insert(0, SCRIPT_DIR)
 
-def get_deterministic_embedding(text: str, dim: int = 384) -> List[float]:
-    """
-    Generate normalized 384-dimensional dense vector representation of text.
-    Provides consistent semantic hash vectors for local execution and tests.
-    """
-    words = text.lower().strip().split()
-    vec = [0.0] * dim
-    if not words:
-        return vec
-    for word in words:
-        h = int(hashlib.sha256(word.encode('utf-8')).hexdigest(), 16)
-        for i in range(dim):
-            # Deterministic pseudo-random projection
-            bit = (h >> (i % 64)) & 1
-            val = 1.0 if bit == 1 else -1.0
-            vec[i] += val * (1.0 / (1.0 + (i % 7)))
-    norm = math.sqrt(sum(x * x for x in vec))
-    if norm > 0:
-        vec = [round(x / norm, 6) for x in vec]
-    return vec
+from app.services.embeddings import get_text_embedding
 
 def seed_postgres(host="localhost", port=5433, db="sql_ginny_db", user="postgres", password="postgres_password_123"):
     print(f"[PostgreSQL] Connecting to {host}:{port}/{db} as {user}...")
@@ -92,7 +73,7 @@ def seed_postgres(host="localhost", port=5433, db="sql_ginny_db", user="postgres
         ]
         
         for item in initial_structs:
-            emb = get_deterministic_embedding(item["description"] + " " + item["struct_name"])
+            emb = get_text_embedding(item["description"] + " " + item["struct_name"])
             cur.execute("""
                 INSERT INTO business_structs (struct_name, struct_type, target_entities, description, sql_expression, metadata, embedding)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)

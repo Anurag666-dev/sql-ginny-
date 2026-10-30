@@ -73,18 +73,20 @@ def tool_delete_business_context(struct_name: str) -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def tool_retrieve_query_context(user_query: str, top_k: int = 4) -> Dict[str, Any]:
+def tool_retrieve_query_context(
+    user_query: str,
+    top_k: int = 4
+) -> Dict[str, Any]:
     """
-    Converts a natural language query into an embedding vector, performs a cosine-distance
-    similarity search (<=>) on 'business_structs' using pgvector, and returns relevant business rules,
-    domain definitions, and join formulas to enrich SQL/Mongo queries.
+    Converts a natural language query into a 384-dim embedding vector, performs a cosine-distance
+    similarity search (<=>) on 'business_structs' using pgvector, and returns the top_k (default 4)
+    business rules, domain definitions, and join formulas.
     """
     try:
         query_vec = get_text_embedding(user_query)
         vec_literal = "[" + ",".join(str(x) for x in query_vec) + "]"
         
-        # Uses pgvector cosine operator <=>
-        sql = f"""
+        sql = """
             SELECT 
                 id, 
                 struct_name, 
@@ -93,17 +95,18 @@ def tool_retrieve_query_context(user_query: str, top_k: int = 4) -> Dict[str, An
                 description, 
                 sql_expression, 
                 metadata,
-                (embedding <=> '{vec_literal}') AS distance
+                (embedding <=> %s::vector) AS distance,
+                ROUND((1 - (embedding <=> %s::vector))::numeric, 4) AS similarity_score
             FROM business_structs
-            ORDER BY distance ASC
+            ORDER BY embedding <=> %s::vector ASC
             LIMIT %s;
         """
         
-        rows = execute_readonly_query(sql, (top_k,))
+        rows = execute_readonly_query(sql, (vec_literal, vec_literal, vec_literal, top_k))
         results = []
         for r in (rows or []):
             item = dict(r)
-            item["similarity_score"] = round(1.0 - float(item.get("distance", 1.0)), 4)
+            item["similarity_score"] = float(item.get("similarity_score", round(1.0 - float(item.get("distance", 1.0)), 4)))
             results.append(item)
             
         return {

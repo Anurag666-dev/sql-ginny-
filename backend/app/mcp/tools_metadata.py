@@ -79,7 +79,7 @@ def tool_get_database_metadata(target_system: str = "ALL") -> Dict[str, Any]:
     if target in ("ALL", "MONGODB", "MONGO"):
         try:
             db = get_sync_mongo_db()
-            collections = db.list_collection_names()
+            collections = [c for c in db.list_collection_names() if not c.startswith("system.") and c not in ("chats", "user_conversations")]
             mongo_meta = {}
             for col_name in collections:
                 coll = db[col_name]
@@ -264,7 +264,7 @@ def tool_identify_mongo_collections(query: str = "") -> Dict[str, Any]:
         q_tokens = [t for t in raw_tokens if len(t) >= 3 and t not in stopwords]
 
         db = get_sync_mongo_db()
-        all_colls = [c for c in db.list_collection_names() if not c.startswith("system.")]
+        all_colls = [c for c in db.list_collection_names() if not c.startswith("system.") and c not in ("chats", "user_conversations")]
 
         candidate_colls = []
         for cname in all_colls:

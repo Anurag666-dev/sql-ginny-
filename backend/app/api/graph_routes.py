@@ -9,7 +9,7 @@ class TraverseRequest(BaseModel):
     start_entity: str
     target_entity: str
     algorithm: str = "BFS" # "BFS" or "DFS"
-    max_hops: int = 5
+    max_hops: Optional[int] = None
 
 @router.get("/topology")
 async def get_graph_topology():

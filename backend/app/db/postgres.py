@@ -43,8 +43,10 @@ def get_db_cursor(use_admin: bool = False, commit: bool = False):
         conn.close()
 
 def execute_readonly_query(sql: str, params=None):
-    """Executes a read query with the restricted user."""
+    """Executes a read query with the restricted user inside a READ ONLY transaction."""
     with get_db_cursor(use_admin=False, commit=False) as cur:
+        # Database-level guard: PostgreSQL rejects any INSERT/UPDATE/DELETE/DDL in this session
+        cur.connection.set_session(readonly=True)
         if params is not None:
             cur.execute(sql, params)
         else:

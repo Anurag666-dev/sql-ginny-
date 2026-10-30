@@ -1,6 +1,11 @@
 import os
+from pathlib import Path
 from typing import List, Union
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
+
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(_ENV_PATH, override=True)
 
 class Settings(BaseSettings):
     # App
